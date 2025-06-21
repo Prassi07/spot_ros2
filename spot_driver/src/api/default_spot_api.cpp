@@ -12,6 +12,7 @@
 #include <tl_expected/expected.hpp>
 #include "spot_driver/api/default_world_object_client.hpp"
 #include "spot_driver/api/state_client_interface.hpp"
+#include <spot_driver/api/default_local_grid_client.hpp>
 
 namespace spot_ros2 {
 
@@ -118,6 +119,19 @@ tl::expected<void, std::string> DefaultSpotApi::authenticate(const std::string& 
   }
   world_object_client_interface_ = std::make_shared<DefaultWorldObjectClient>(world_object_client_result.response);
 
+
+  // Local Grid Client 
+  auto local_grid_client_result = robot_->EnsureServiceClient<::bosdyn::client::LocalGridClient>(::bosdyn::client::LocalGridClient::GetDefaultServiceName());
+  if(!local_grid_client_result.status){
+    return tl::make_unexpected("Failed to create local grid client: " +
+                               local_grid_client_result.status.DebugString());
+  }
+  if(local_grid_client_result.response == nullptr){
+    return tl::make_unexpected("Failed to create local grid client (nullptr): " +
+                               local_grid_client_result.status.DebugString());
+  }
+  local_grid_client_ = std::make_shared<DefaultLocalGridClient>(local_grid_client_result.response);
+
   return {};
 }
 
@@ -158,6 +172,10 @@ std::shared_ptr<TimeSyncApi> DefaultSpotApi::timeSyncInterface() const {
 
 std::shared_ptr<WorldObjectClientInterface> DefaultSpotApi::worldObjectClientInterface() const {
   return world_object_client_interface_;
+}
+
+std::shared_ptr<LocalGridClientInterface> DefaultSpotApi::localGridClientInterface() const {
+  return local_grid_client_;
 }
 
 }  // namespace spot_ros2

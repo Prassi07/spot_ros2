@@ -8,6 +8,7 @@
 #include <spot_driver/api/time_sync_api.hpp>
 #include <spot_driver/api/world_object_client_interface.hpp>
 #include <spot_driver/interfaces/image_client_interface.hpp>
+#include <spot_driver/api/local_grid_client_interface.hpp>
 #include <tl_expected/expected.hpp>
 
 #include <memory>
@@ -49,5 +50,11 @@ class SpotApi {
   [[nodiscard]] virtual std::shared_ptr<LeaseClientInterface> leaseClientInterface() const = 0;
   virtual std::shared_ptr<TimeSyncApi> timeSyncInterface() const = 0;
   [[nodiscard]] virtual std::shared_ptr<WorldObjectClientInterface> worldObjectClientInterface() const = 0;
+
+  /**
+   * @brief Get a LocalGridClientInterface that communicates with Spot's local grid server
+   * @return A shared_ptr to an instance of LocalGridClientInterface which is owned by this object.
+   */
+  virtual std::shared_ptr<LocalGridClientInterface> localGridClientInterface() const = 0;
 };
 }  // namespace spot_ros2
