@@ -14,6 +14,7 @@
 
 namespace {
 constexpr auto kLocalGridCallbackPeriod = std::chrono::duration<double>{1.0 / 30.0};  // 30 Hz
+constexpr auto kDownSampledGridCallbackPeriod = std::chrono::duration<double>{1.0 / 50.0}; // 50 Hz
 }
 
 namespace spot_ros2 {
@@ -34,24 +35,43 @@ LocalGridPublisher::LocalGridPublisher(
       timer_interface_{std::move(timer_interface)} {}
 
 bool LocalGridPublisher::initialize() {
+  
   // Read configuration from the parameter interface.
-  // standard_grids_to_publish_ = param_interface_->getGridNames();
-  // publish_downsampled_grid_ = param_interface_->getPublishDownsampledGrid();
+  const auto grids_parameter = param_interface_->getLocalGridsUsed();
+  
+  if(grids_parameter.has_value()){
+    grids_requested_ = grids_parameter.value();
+  }
+  else{
+    logger_->logWarn("Invalid local_grid_names parameter! Got error:" + grids_parameter.error() + 
+                      " Defaulting to obstacle_distance" );
+    grids_requested_.insert(SpotLocalGrid::OBSTACLE_DISTANCE);                
+  }
+
+  publish_scandots_ = param_interface_->getPublishScanDots();
   logger_->logInfo("LocalGridPublisher initialized.");
 
   // Create publishers for all the grid topics we need.
   auto all_grids = standard_grids_to_publish_;
   
-  if (publish_downsampled_grid_) {
+  if (publish_scandots_) {
     all_grids.push_back("DownsampledScanDots");
   }
 
   middleware_handle_->createPublishers(all_grids);
 
+  terrain_grid_data_ = std::make_shared<nav_msgs::msg::OccupancyGrid>();
+
   // Create a timer to publish local grids
   timer_interface_->setTimer(kLocalGridCallbackPeriod, [this]() {
-    timerCallback();
+    localGridTimerCallback();
   });
+
+  if (publish_scandots_) {
+    timer_interface_->setTimer(kDownSampledGridCallbackPeriod, [this]() {
+      downsampledGridTimerCallback();
+    });
+  }
 
   return true;
 }
@@ -208,13 +228,11 @@ bool LocalGridPublisher::initialize() {
 //   return msg;
 // }
 
-void LocalGridPublisher::publishDownsampledGrid(const nav_msgs::msg::OccupancyGrid& full_grid) {
+void LocalGridPublisher::downsampledGridTimerCallback() {
   logger_->logDebug("Downsampled grid publishing is not yet implemented.");
   // TODO:
   // 1. Create a nav_msgs::msg::OccupancyGrid::UniquePtr.
   auto downsampled_msg = std::make_unique<nav_msgs::msg::OccupancyGrid>();
-  // 2. Set its header and info fields.
-  downsampled_msg->header = full_grid.header;
   //     Example: resolution is doubled, width/height are halved.
   // 3. Implement your downsampling logic.
   //    (e.g., iterate through the full_grid.data in 2x2 blocks and find max value)

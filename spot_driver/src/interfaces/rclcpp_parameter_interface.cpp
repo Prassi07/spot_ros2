@@ -34,6 +34,8 @@ constexpr auto kParameterFramePrefix = "frame_prefix";
 constexpr auto kParameterNameGripperless = "gripperless";
 constexpr auto kParameterTimeSyncTimeout = "timesync_timeout";
 constexpr auto kParameterNameLeaseRate = "lease_rate";
+constexpr auto kParameterLocalGridNames = "local_grid_names";
+constexpr auto kParameterPublishScanDots = "publish_scandots";
 
 namespace type_traits {
 template <typename, typename = void>
@@ -223,6 +225,11 @@ bool RclcppParameterInterface::getPublishDepthRegisteredImages() const {
                                       kDefaultPublishDepthRegisteredImages);
 }
 
+bool RclcppParameterInterface::getPublishScanDots() const {
+  return declareAndGetParameter<bool>(node_, kParameterPublishScanDots,
+                                      kDefaultPublishScanDots);
+}
+
 std::string RclcppParameterInterface::getPreferredOdomFrame() const {
   const std::string preferred_odom_frame =
       declareAndGetParameter<std::string>(node_, kParameterPreferredOdomFrame, kDefaultPreferredOdomFrame);
@@ -292,6 +299,26 @@ tl::expected<std::set<spot_ros2::SpotCamera>, std::string> RclcppParameterInterf
     }
   }
   return spot_cameras_used;
+}
+
+tl::expected<std::set<spot_ros2::SpotLocalGrid>, std::string> RclcppParameterInterface::getLocalGridsUsed() const {
+  
+  std::vector<std::string> local_grid_default;
+  local_grid_default.push_back(kDefaultLocalGrid);
+
+  const auto local_grid_params =
+      declareAndGetParameter<std::vector<std::string>>(node_, kParameterLocalGridNames, local_grid_default);
+
+  std::set<spot_ros2::SpotLocalGrid> local_grids_requested;
+  for (const auto& grid : local_grid_params){
+    try {
+      const auto spot_local_grid = kRosStringToSpotLocalGrid.at(grid);
+      local_grids_requested.insert(spot_local_grid);
+    } catch (const std::out_of_range& e) {
+      return tl::make_unexpected("Cannot convert local_grid '" + grid + "' to a SpotLocalGrid.");
+    }
+  }
+  return local_grids_requested;
 }
 
 std::string RclcppParameterInterface::getSpotNameWithFallbackToNamespace() const {

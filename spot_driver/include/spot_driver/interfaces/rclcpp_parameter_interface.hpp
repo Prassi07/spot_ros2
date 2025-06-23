@@ -47,6 +47,8 @@ class RclcppParameterInterface : public ParameterInterfaceBase {
       const bool has_arm, const bool gripperless) const override;
   [[nodiscard]] std::chrono::seconds getTimeSyncTimeout() const override;
   [[nodiscard]] std::optional<double> getLeaseRate() const override;
+  [[nodiscard]] tl::expected<std::set<spot_ros2::SpotLocalGrid>, std::string> getLocalGridsUsed() const override;
+  [[nodiscard]] bool getPublishScanDots() const override;
 
  private:
   std::shared_ptr<rclcpp::Node> node_;

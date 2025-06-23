@@ -51,6 +51,8 @@ class FakeParameterInterface : public ParameterInterfaceBase {
 
   std::optional<double> getLeaseRate() const override { return 1.0; }
 
+  bool getPublishScanDots() const override { return  kDefaultPublishScanDots; }
+
   std::set<spot_ros2::SpotCamera> getDefaultCamerasUsed(const bool has_arm, const bool gripperless) const override {
     const auto kDefaultCamerasUsed = (has_arm && !gripperless) ? kCamerasWithHand : kCamerasWithoutHand;
     std::set<spot_ros2::SpotCamera> spot_cameras_used;
@@ -63,6 +65,12 @@ class FakeParameterInterface : public ParameterInterfaceBase {
   tl::expected<std::set<spot_ros2::SpotCamera>, std::string> getCamerasUsed(const bool has_arm,
                                                                             const bool gripperless) const override {
     return getDefaultCamerasUsed(has_arm, gripperless);
+  }
+
+  tl::expected<std::set<spot_ros2::SpotLocalGrid>, std::string> getLocalGridsUsed() const override {
+    std::set<spot_ros2::SpotLocalGrid> local_grids_default;
+    local_grids_default.insert(kRosStringToSpotLocalGrid.at(kDefaultLocalGrid));
+    return local_grids_default;
   }
 
   std::chrono::seconds getTimeSyncTimeout() const override { return kDefaultTimeSyncTimeout; }

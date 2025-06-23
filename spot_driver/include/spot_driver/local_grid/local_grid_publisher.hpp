@@ -57,7 +57,12 @@ class LocalGridPublisher {
   /**
    * @brief Fetches data from the robot and publishes all configured grids.
    */
-  void timerCallback();
+  void localGridTimerCallback();
+
+  /**
+   * @brief Computes the downsampled grid from last received high-resolution terrain grid.
+   */
+  void downsampledGridTimerCallback();
 
   /**
    * @brief Unpacks a LocalGrid's raw data into a more usable format based on its encoding.
@@ -82,12 +87,6 @@ class LocalGridPublisher {
   nav_msgs::msg::OccupancyGrid::UniquePtr processTerrainGrid(const bosdyn::api::LocalGrid& terrain_grid,
                                                              const bosdyn::api::LocalGrid& valid_grid) const;
 
-  /**
-   * @brief Creates and publishes the custom downsampled grid if enabled.
-   * @param full_grid The full-resolution terrain grid to use as the source for downsampling.
-   */
-  void publishDownsampledGrid(const nav_msgs::msg::OccupancyGrid& full_grid);
-
   std::unique_ptr<LoggerInterfaceBase> logger_;
   std::unique_ptr<ParameterInterfaceBase> param_interface_;
   std::unique_ptr<MiddlewareHandle> middleware_handle_;
@@ -98,7 +97,11 @@ class LocalGridPublisher {
 
   // Parameters read from the ROS parameter server
   std::vector<std::string> standard_grids_to_publish_;
-  bool publish_downsampled_grid_;
+  std::set<SpotLocalGrid> grids_requested_;
+
+  bool publish_scandots_;
+
+  std::shared_ptr<nav_msgs::msg::OccupancyGrid> terrain_grid_data_;
 };
 
 }  // namespace spot_ros2

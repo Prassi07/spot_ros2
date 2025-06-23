@@ -84,6 +84,27 @@ struct CompressedImageWithCameraInfo {
   bool operator==(const CompressedImageWithCameraInfo& e) const { return e.image == image && e.info == info; }
 };
 
+/** @brief Represents the five different local grids on Spot. */
+enum class SpotLocalGrid{
+  TERRAIN,
+  TERRAIN_VALID,
+  TERRAIN_INTENSITY,
+  NO_STEP,
+  OBSTACLE_DISTANCE,
+};
+
+/**
+ * @brief Map from each ROS camera topic name to SpotCamera value.
+ */
+static const std::unordered_map<std::string, spot_ros2::SpotLocalGrid> kRosStringToSpotLocalGrid{
+    {"terrain", spot_ros2::SpotLocalGrid::TERRAIN},
+    {"terrain_valid", spot_ros2::SpotLocalGrid::TERRAIN_VALID},
+    {"terrain_intensity", spot_ros2::SpotLocalGrid::TERRAIN_INTENSITY},
+    {"no_step", spot_ros2::SpotLocalGrid::NO_STEP},
+    {"obstacle_distance", spot_ros2::SpotLocalGrid::OBSTACLE_DISTANCE},
+};
+
+
 }  // namespace spot_ros2
 
 /**

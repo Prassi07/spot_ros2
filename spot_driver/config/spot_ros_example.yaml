@@ -53,3 +53,7 @@
 
     # Change to True if missing gripper on arm
     gripperless: False
+    
+    # Local Grids to be Published 
+    local_grid_names: ["terrain"]
+    publish_scandots: False

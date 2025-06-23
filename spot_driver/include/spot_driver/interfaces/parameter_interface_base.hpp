@@ -51,6 +51,8 @@ class ParameterInterfaceBase {
                                                                                     bool gripperless) const = 0;
   virtual std::chrono::seconds getTimeSyncTimeout() const = 0;
   virtual std::optional<double> getLeaseRate() const = 0;
+  virtual tl::expected<std::set<spot_ros2::SpotLocalGrid>, std::string> getLocalGridsUsed() const = 0;
+  virtual bool getPublishScanDots() const = 0;
 
  protected:
   // These are the definitions of the default values for optional parameters.
@@ -73,5 +75,7 @@ class ParameterInterfaceBase {
   static constexpr auto kCamerasWithHand = {"frontleft", "frontright", "left", "right", "back", "hand"};
   static constexpr std::chrono::seconds kDefaultTimeSyncTimeout{5};
   static constexpr double kDefaultLeaseRate{0.0};
+  static constexpr auto kDefaultLocalGrid = "obstacle_distance";
+  static constexpr bool kDefaultPublishScanDots{false};
 };
 }  // namespace spot_ros2
