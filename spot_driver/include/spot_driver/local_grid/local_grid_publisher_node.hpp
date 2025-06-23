@@ -4,11 +4,12 @@
 #include <rclcpp/node_interfaces/node_base_interface.hpp>
 #include <rclcpp/node_options.hpp>
 
-#include <spot_driver/api/default_spot_api.hpp>
+#include <spot_driver/api/spot_api.hpp>
 #include <spot_driver/interfaces/rclcpp_node_interface.hpp>
 #include <spot_driver/interfaces/rclcpp_logger_interface.hpp>
 #include <spot_driver/interfaces/rclcpp_parameter_interface.hpp>
 #include <spot_driver/interfaces/rclcpp_wall_timer_interface.hpp>
+
 #include <spot_driver/local_grid/local_grid_publisher.hpp>
 
 

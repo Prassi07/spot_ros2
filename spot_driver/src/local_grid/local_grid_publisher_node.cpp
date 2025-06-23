@@ -1,5 +1,7 @@
 #include <spot_driver/local_grid/local_grid_publisher_node.hpp>
 
+#include <spot_driver/api/default_spot_api.hpp>
+
 #include <spot_driver/interfaces/rclcpp_logger_interface.hpp>
 #include <spot_driver/interfaces/rclcpp_node_interface.hpp>
 #include <spot_driver/interfaces/rclcpp_parameter_interface.hpp>

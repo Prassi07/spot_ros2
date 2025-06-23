@@ -1,12 +1,10 @@
 #pragma once
 
-#include <spot_driver/local_grid/local_grid_publisher.hpp>
-
 #include <rclcpp/node.hpp>
-#include <spot_driver/images/spot_image_publisher.hpp>
 #include <spot_driver/interfaces/rclcpp_logger_interface.hpp>
 #include <spot_driver/interfaces/rclcpp_parameter_interface.hpp>
 #include <spot_driver/interfaces/rclcpp_wall_timer_interface.hpp>
+#include <spot_driver/local_grid/local_grid_publisher.hpp>
 
 #include <nav_msgs/msg/occupancy_grid.hpp>
 

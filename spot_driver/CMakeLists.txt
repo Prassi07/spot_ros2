@@ -86,6 +86,9 @@ add_library(spot_api
   src/robot_state/state_middleware_handle.cpp
   src/robot_state/state_publisher.cpp
   src/robot_state/state_publisher_node.cpp
+  src/local_grid/local_grid_middleware_handle.cpp
+  src/local_grid/local_grid_publisher.cpp
+  src/local_grid/local_grid_publisher_node.cpp
 )
 
 target_include_directories(spot_api PUBLIC
@@ -213,6 +216,36 @@ target_include_directories(object_synchronizer_node
     $<INSTALL_INTERFACE:include>
 )
 target_link_libraries(object_synchronizer_node PUBLIC spot_api)
+
+
+###
+# Spot Local Grid publisher
+###
+
+# Create executable to allow running StatePublisherNode directly as a ROS 2 node
+add_executable(local_grid_publisher_node src/local_grid/local_grid_publisher_node_main.cpp)
+target_link_libraries(local_grid_publisher_node PUBLIC spot_api)
+target_include_directories(local_grid_publisher_node
+  PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+)
+
+# Register a composable node to allow loading StatePublisherNode in a component container
+add_library(local_grid_publisher_component SHARED src/local_grid/local_grid_publisher_component.cpp)
+target_include_directories(local_grid_publisher_component
+  PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+)
+target_link_libraries(local_grid_publisher_component PUBLIC spot_api)
+ament_target_dependencies(local_grid_publisher_component PUBLIC rclcpp_components)
+
+rclcpp_components_register_node(
+  local_grid_publisher_component
+  PLUGIN "spot_ros2::LocalGridPublisherNode"
+  EXECUTABLE local_grid_publisher_node_component)
+
 
 rclcpp_components_register_node(
   spot_inverse_kinematics_component

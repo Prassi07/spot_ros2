@@ -99,7 +99,7 @@ enum class SpotLocalGrid{
 static const std::unordered_map<std::string, spot_ros2::SpotLocalGrid> kRosStringToSpotLocalGrid{
     {"terrain", spot_ros2::SpotLocalGrid::TERRAIN},
     {"terrain_valid", spot_ros2::SpotLocalGrid::TERRAIN_VALID},
-    {"terrain_intensity", spot_ros2::SpotLocalGrid::TERRAIN_INTENSITY},
+    {"intensity", spot_ros2::SpotLocalGrid::TERRAIN_INTENSITY},
     {"no_step", spot_ros2::SpotLocalGrid::NO_STEP},
     {"obstacle_distance", spot_ros2::SpotLocalGrid::OBSTACLE_DISTANCE},
 };

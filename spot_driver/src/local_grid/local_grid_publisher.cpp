@@ -49,17 +49,53 @@ bool LocalGridPublisher::initialize() {
   }
 
   publish_scandots_ = param_interface_->getPublishScanDots();
+
+  tf_root_ = param_interface_->getTFRoot();
+  frame_prefix_ = param_interface_->getFramePrefixWithDefaultFallback();
+  full_tf_root_id_ = frame_prefix_ + tf_root_;
+
   logger_->logInfo("LocalGridPublisher initialized.");
 
+  for(const auto& grid: grids_requested_){
+    if (grid == SpotLocalGrid::TERRAIN){
+      standard_grids_to_publish_.push_back("terrain");
+      standard_grids_to_request_.push_back("terrain");
+
+      if(std::find(standard_grids_to_request_.begin(), standard_grids_to_request_.end(), "terrain_valid") == standard_grids_to_request_.end()){
+        standard_grids_to_request_.push_back("terrain_valid");
+      }
+    }
+    else if(grid == SpotLocalGrid::TERRAIN_INTENSITY){
+      standard_grids_to_publish_.push_back("intensity");
+      standard_grids_to_request_.push_back("intensity");
+
+      if(std::find(standard_grids_to_request_.begin(), standard_grids_to_request_.end(), "terrain_valid") == standard_grids_to_request_.end()){
+        standard_grids_to_request_.push_back("terrain_valid");
+      }
+    }
+    else if(grid == SpotLocalGrid::TERRAIN_VALID){
+      standard_grids_to_publish_.push_back("terrain_valid");
+      if(std::find(standard_grids_to_request_.begin(), standard_grids_to_request_.end(), "terrain_valid") == standard_grids_to_request_.end()){
+        standard_grids_to_request_.push_back("terrain_valid");
+      }
+    }
+    else if(grid == SpotLocalGrid::NO_STEP){
+      standard_grids_to_publish_.push_back("no_step");
+      standard_grids_to_request_.push_back("no_step");
+    }
+    else if(grid == SpotLocalGrid::OBSTACLE_DISTANCE){
+      standard_grids_to_publish_.push_back("obstacle_distance");
+      standard_grids_to_request_.push_back("obstacle_distance");
+    }
+  }
   // Create publishers for all the grid topics we need.
-  auto all_grids = standard_grids_to_publish_;
-  
   if (publish_scandots_) {
-    all_grids.push_back("DownsampledScanDots");
+    standard_grids_to_publish_.push_back("DownsampledScanDots");
   }
 
-  middleware_handle_->createPublishers(all_grids);
+  middleware_handle_->createPublishers(standard_grids_to_publish_);
 
+  terrain_grid_initialized_ = false;
   terrain_grid_data_ = std::make_shared<nav_msgs::msg::OccupancyGrid>();
 
   // Create a timer to publish local grids
@@ -76,69 +112,85 @@ bool LocalGridPublisher::initialize() {
   return true;
 }
 
-// void LocalGridPublisher::timerCallback() {
-//   // Build the list of all grids we need to request from the robot.
-//   auto grids_to_request = standard_grids_to_publish_;
-//   // The 'terrain' grid requires 'terrain_valid' for processing, so we must request it as well.
-//   if (std::find(grids_to_request.begin(), grids_to_request.end(), "terrain") != grids_to_request.end()) {
-//     if (std::find(grids_to_request.begin(), grids_to_request.end(), "terrain_valid") == grids_to_request.end()) {
-//         grids_to_request.push_back("terrain_valid");
-//     }
-//   }
+void LocalGridPublisher::localGridTimerCallback() {
+  
+  // Build the list of all grids we need to request from the robot.
+  auto grids_to_request = standard_grids_to_request_;
 
-//   if (grids_to_request.empty()) {
-//     return;
-//   }
+  // The 'terrain' grid requires 'terrain_valid' for processing, so we must request it as well.
+  if (std::find(grids_to_request.begin(), grids_to_request.end(), "terrain") != grids_to_request.end()) {
+    if (std::find(grids_to_request.begin(), grids_to_request.end(), "terrain_valid") == grids_to_request.end()) {
+        grids_to_request.push_back("terrain_valid");
+    }
+  }
 
-//   // Make a single API call to get all requested grids.
-//   const auto result = local_grid_client_interface_->getLocalGrids(grids_to_request);
-//   if (!result) {
-//     logger_->logError("Failed to get local grids: " + result.error());
-//     return;
-//   }
+  if (grids_to_request.empty()) {
+    return;
+  }
 
-//   const auto& responses = result.value().local_grid_responses();
-//   nav_msgs::msg::OccupancyGrid::SharedPtr terrain_msg_for_downsample = nullptr;
+  // Make a single API call to get all requested grids.
+  const auto result = local_grid_client_interface_->getLocalGrids(grids_to_request);
+  if (!result) {
+    logger_->logError("Failed to get local grids: " + result.error());
+    return;
+  }
 
-//   // Handle the special case of the 'terrain' grid first.
-//   if (std::find(standard_grids_to_publish_.begin(), standard_grids_to_publish_.end(), "terrain") !=
-//       standard_grids_to_publish_.end()) {
-//     const auto* terrain_response =
-//         std::find_if(responses.cbegin(), responses.cend(), [](const auto& r) { return r.local_grid_type_name() == "terrain"; });
-//     const auto* valid_response = std::find_if(
-//         responses.cbegin(), responses.cend(), [](const auto& r) { return r.local_grid_type_name() == "terrain_valid"; });
+  const auto& responses = result.value().local_grid_responses();
+  const auto& num_errors = result.value().num_local_grid_errors();
 
-//     if (terrain_response != responses.cend() && valid_response != responses.cend()) {
-//       auto terrain_occ_msg = processTerrainGrid(terrain_response->local_grid(), valid_response->local_grid());
-//       if (terrain_occ_msg) {
-//         // Keep a shared_ptr to this message in case we need it for downsampling.
-//         terrain_msg_for_downsample = terrain_occ_msg;
-//         middleware_handle_->publishSpecificOccupancyGrid("terrain", std::move(terrain_occ_msg));
-//       }
-//     } else {
-//       logger_->logWarn("Requested 'terrain' grid but did not receive both 'terrain' and 'terrain_valid' from robot.");
-//     }
-//   }
+  if(num_errors != 0){
+    logger_->logWarn("Failed to get some of the local grids!");
+  }
+  
+  const auto state_result = state_client_interface_->getRobotState();
+  if(!result){
+    logger_->logError("Failed to get robot state for local grids: " + result.error());
+    return;
+  }
 
-//   // Process all other standard grid types.
-//   for (const auto& response : responses) {
-//     const auto& name = response.local_grid_type_name();
-//     // Skip 'terrain' and 'terrain_valid' since we've already handled them.
-//     if (name == "terrain" || name == "terrain_valid") {
-//       continue;
-//     }
+  tf_snapshot_ = state_result.value().kinematic_state().transforms_snapshot();
+  
+  // Handle the special case of the 'terrain' grid first.
+  // if (std::find(standard_grids_to_publish_.begin(), standard_grids_to_publish_.end(), "terrain") !=
+  //     standard_grids_to_publish_.end()) {
+  //   const auto* terrain_response =
+  //       std::find_if(responses.cbegin(), responses.cend(), [](const auto& r) { return r.local_grid_type_name() == "terrain"; });
+  //   const auto* valid_response = std::find_if(
+  //       responses.cbegin(), responses.cend(), [](const auto& r) { return r.local_grid_type_name() == "terrain_valid"; });
 
-//     auto occ_msg = processSingleGrid(response);
-//     if (occ_msg) {
-//       middleware_handle_->publishSpecificOccupancyGrid(name, std::move(occ_msg));
-//     }
-//   }
+  //   if (terrain_response != responses.cend() && valid_response != responses.cend()) {
+  //     auto terrain_occ_msg = processTerrainGrid(terrain_response->local_grid(), valid_response->local_grid());
+  //     if (terrain_occ_msg) {
+  //       // Keep a shared_ptr to this message in case we need it for downsampling.
+  //       terrain_msg_for_downsample = terrain_occ_msg;
+  //       middleware_handle_->publishSpecificOccupancyGrid("terrain", std::move(terrain_occ_msg));
+  //     }
+  //   } else {
+  //     logger_->logWarn("Requested 'terrain' grid but did not receive both 'terrain' and 'terrain_valid' from robot.");
+  //   }
+  // }
 
-//   // Handle the custom downsampled grid if enabled and we have a valid source grid.
-//   if (publish_downsampled_grid_ && terrain_msg_for_downsample) {
-//     publishDownsampledGrid(*terrain_msg_for_downsample);
-//   }
-// }
+  // Process NON-TERRAIN GRID
+  for (const ::bosdyn::api::LocalGridResponse& response : responses) {
+    const auto& name = response.local_grid_type_name();
+    // Skip 'terrain' and 'terrain_valid' since we've already handled them.
+    if (name == "terrain" || name == "terrain_valid" || name == "intensity") {
+      continue;
+    }
+
+    if(response.status() != ::bosdyn::api::LocalGridResponse_Status::LocalGridResponse_Status_STATUS_OK){
+      logger_->logError("No data received for local_grid with name: " + name);
+      continue;
+    }
+
+    auto occ_msg = processNonTerrainGrid(response);
+    if (occ_msg) {
+      middleware_handle_->publishSpecificOccupancyGrid(name, std::move(occ_msg));
+    }
+  }
+
+  terrain_grid_initialized_ = true;
+}
 
 // std::vector<uint8_t> LocalGridPublisher::unpackGridData(const bosdyn::api::LocalGrid& local_grid_proto) const {
 //   // This function can be expanded to handle RLE, but for now we assume RAW encoding
@@ -151,36 +203,50 @@ bool LocalGridPublisher::initialize() {
 //   return {};
 // }
 
-// nav_msgs::msg::OccupancyGrid::UniquePtr LocalGridPublisher::processSingleGrid(
-//     const bosdyn::api::LocalGridResponse& grid_response) const {
-//   // This is a simplified processor for non-terrain grids.
-//   // The exact conversion from raw data to 0-100 occupancy values depends on the grid type.
-//   // This placeholder assumes a direct mapping, which may need adjustment.
-//   auto msg = std::make_unique<nav_msgs::msg::OccupancyGrid>();
-//   const auto& grid_proto = grid_response.local_grid();
+nav_msgs::msg::OccupancyGrid::UniquePtr LocalGridPublisher::processNonTerrainGrid(
+    const ::bosdyn::api::LocalGridResponse& grid_response) const {
+ 
+  auto msg = std::make_unique<nav_msgs::msg::OccupancyGrid>();
+  const ::bosdyn::api::LocalGrid& grid_proto = grid_response.local_grid();
 
-//   // Populate header and info (same as terrain grid)
-//   msg->header.stamp = toRosTime(grid_proto.acquisition_time());
-//   msg->header.frame_id = grid_proto.frame_name_local_grid_data();
-//   msg->info.map_load_time = msg->header.stamp;
-//   msg->info.resolution = grid_proto.extent().cell_size();
-//   msg->info.width = grid_proto.extent().num_cells_x();
-//   msg->info.height = grid_proto.extent().num_cells_y();
-//   const auto& extent = grid_proto.extent();
-//   msg->info.origin.position.x = extent.cell_size() * (0.5 - extent.num_cells_x() / 2.0);
-//   msg->info.origin.position.y = extent.cell_size() * (0.5 - extent.num_cells_y() / 2.0);
+  // Populate header and info (same as terrain grid)
+  msg->header.stamp.sec =  grid_proto.acquisition_time().seconds();
+  msg->header.stamp.nanosec = grid_proto.acquisition_time().nanos();
 
-//   auto unpacked_data = unpackGridData(grid_proto);
-//   if (unpacked_data.empty()) {
-//     return nullptr;
-//   }
+  msg->info.map_load_time = msg->header.stamp;
+  msg->info.resolution = grid_proto.extent().cell_size();
+  msg->info.width = grid_proto.extent().num_cells_x();
+  msg->info.height = grid_proto.extent().num_cells_y();
+  msg->header.frame_id = full_tf_root_id_;
 
-//   // Convert to int8_t for the final message. This is a naive conversion.
-//   // Real implementation would need to know the meaning of the data for each grid type.
-//   msg->data.assign(unpacked_data.begin(), unpacked_data.end());
+  const auto& extent = grid_proto.extent();
 
-//   return msg;
-// }
+  std::string grid_frame_id = grid_proto.frame_name_local_grid_data();
+
+  ::bosdyn::api::SE3Pose* transform = new ::bosdyn::api::SE3Pose();
+  ::bosdyn::api::SE3Pose* ground_plane_tf = new ::bosdyn::api::SE3Pose();
+  ::bosdyn::api::get_a_tform_b(grid_proto.transforms_snapshot(), tf_root_, grid_frame_id, transform); 
+
+  ::bosdyn::api::get_a_tform_b(tf_snapshot_, tf_root_, ::bosdyn::api::kGroundPlaneEstimateFrame, ground_plane_tf);
+  
+  transform->mutable_position()->set_z(ground_plane_tf->position().z());
+  
+  geometry_msgs::msg::Pose rosPose;
+  convertToRos(*transform, rosPose);
+
+  msg->info.origin = rosPose;
+
+  // auto unpacked_data = unpackGridData(grid_proto);
+  // if (unpacked_data.empty()) {
+  //   return nullptr;
+  // }
+
+  // Convert to int8_t for the final message. This is a naive conversion.
+  // Real implementation would need to know the meaning of the data for each grid type.
+  // msg->data.assign(unpacked_data.begin(), unpacked_data.end());
+
+  return msg;
+}
 
 // nav_msgs::msg::OccupancyGrid::UniquePtr LocalGridPublisher::processTerrainGrid(
 //     const bosdyn::api::LocalGrid& terrain_grid, const bosdyn::api::LocalGrid& valid_grid) const {
@@ -229,6 +295,11 @@ bool LocalGridPublisher::initialize() {
 // }
 
 void LocalGridPublisher::downsampledGridTimerCallback() {
+  
+  if(!terrain_grid_initialized_){
+    return;
+  }
+
   logger_->logDebug("Downsampled grid publishing is not yet implemented.");
   // TODO:
   // 1. Create a nav_msgs::msg::OccupancyGrid::UniquePtr.

@@ -3,13 +3,15 @@
 #include <spot_driver/api/spot_api.hpp>
 #include <spot_driver/interfaces/logger_interface_base.hpp>
 #include <spot_driver/interfaces/parameter_interface_base.hpp>
-#include <spot_driver/local_grid/local_grid_middleware_handle.hpp>
 #include <spot_driver/api/middleware_handle_base.hpp>
+
+#include <bosdyn/math/frame_helpers.h>
+#include <nav_msgs/msg/occupancy_grid.hpp>
 
 #include <memory>
 #include <string>
 #include <vector>
-#include <rclcpp_wall_timer_interface.hpp>
+#include <spot_driver/interfaces/rclcpp_wall_timer_interface.hpp>
 
 namespace spot_ros2 {
 
@@ -69,14 +71,14 @@ class LocalGridPublisher {
    * @param local_grid_proto The protobuf message received from Spot.
    * @return A vector of bytes representing the decoded grid data.
    */
-  std::vector<uint8_t> unpackGridData(const bosdyn::api::LocalGrid& local_grid_proto) const;
+  // std::vector<uint8_t> unpackGridData(const ::bosdyn::api::LocalGrid& local_grid_proto) const;
 
   /**
    * @brief Processes a single grid type into a ROS OccupancyGrid message.
    * @param grid_response The LocalGridResponse protobuf for a single grid type.
    * @return A unique_ptr to the generated nav_msgs::msg::OccupancyGrid. Returns nullptr on failure.
    */
-  nav_msgs::msg::OccupancyGrid::UniquePtr processSingleGrid(const bosdyn::api::LocalGridResponse& grid_response) const;
+  nav_msgs::msg::OccupancyGrid::UniquePtr processNonTerrainGrid(const ::bosdyn::api::LocalGridResponse& grid_response) const;
 
   /**
    * @brief Processes the special 'terrain' grid, which requires combining it with the 'terrain_valid' grid.
@@ -84,23 +86,25 @@ class LocalGridPublisher {
    * @param valid_grid The LocalGrid protobuf for the 'terrain_valid' data.
    * @return A unique_ptr to the generated nav_msgs::msg::OccupancyGrid. Returns nullptr on failure.
    */
-  nav_msgs::msg::OccupancyGrid::UniquePtr processTerrainGrid(const bosdyn::api::LocalGrid& terrain_grid,
-                                                             const bosdyn::api::LocalGrid& valid_grid) const;
-
+  // nav_msgs::msg::OccupancyGrid::UniquePtr processTerrainGrid(const ::bosdyn::api::LocalGrid& terrain_grid,
+  //                                                            const ::bosdyn::api::LocalGrid& valid_grid ) const;
+  
   std::unique_ptr<LoggerInterfaceBase> logger_;
   std::unique_ptr<ParameterInterfaceBase> param_interface_;
   std::unique_ptr<MiddlewareHandle> middleware_handle_;
+  std::shared_ptr<LocalGridClientInterface> local_grid_client_interface_;
+  std::shared_ptr<StateClientInterface> state_client_interface_;
   std::unique_ptr<TimerInterfaceBase> timer_interface_;
 
-  std::shared_ptr<StateClientInterface> state_client_interface_;
-  std::shared_ptr<LocalGridClientInterface> local_grid_client_interface_;
-
   // Parameters read from the ROS parameter server
-  std::vector<std::string> standard_grids_to_publish_;
+  std::vector<std::string> standard_grids_to_publish_, standard_grids_to_request_;
   std::set<SpotLocalGrid> grids_requested_;
 
-  bool publish_scandots_;
+  bool publish_scandots_, terrain_grid_initialized_;
+  ::bosdyn::api::FrameTreeSnapshot tf_snapshot_;
+  ::bosdyn::api::RobotState robot_state_;
 
+  std::string tf_root_, frame_prefix_, full_tf_root_id_;
   std::shared_ptr<nav_msgs::msg::OccupancyGrid> terrain_grid_data_;
 };
 
