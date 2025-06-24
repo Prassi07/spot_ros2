@@ -163,18 +163,19 @@ void LocalGridPublisher::localGridTimerCallback() {
   
   // Process NON-TERRAIN GRID first
   const ::bosdyn::api::LocalGridResponse *terrain_response, *terrain_valid_response;
-  bool publish_terrain_grids = false;
+  int publish_terrain_grids = 0;
 
   for (const ::bosdyn::api::LocalGridResponse& response : responses) {
     const auto& name = response.local_grid_type_name();
     // Skip 'terrain' and 'terrain_valid' since we've already handled them.
     if (name == "terrain"){
       terrain_response = &response;
-      publish_terrain_grids = true;
+      publish_terrain_grids++;
       continue;
     }
     if (name == "terrain_valid") {
       terrain_valid_response = &response;
+      publish_terrain_grids++;
       continue;
     }
 
@@ -189,7 +190,7 @@ void LocalGridPublisher::localGridTimerCallback() {
     }
   }
 
-  if(publish_terrain_grids){
+  if(publish_terrain_grids >= 2){
     ProcessedGridResult terrain_grids;
     processTerrainGrid(*terrain_response, *terrain_valid_response, terrain_grids);
 
@@ -199,10 +200,16 @@ void LocalGridPublisher::localGridTimerCallback() {
     if(terrain_grids.secondary_grid.has_value()){
       middleware_handle_->publishSpecificOccupancyGrid(terrain_valid_response->local_grid_type_name(), std::move(terrain_grids.secondary_grid.value()));
     }
+  
+    terrain_grid_initialized_ = true;
+  }
+  else if(publish_terrain_grids == 1){
+    auto occ_msg = processNonTerrainGrid(*terrain_valid_response);
+    if (occ_msg) {
+      middleware_handle_->publishSpecificOccupancyGrid(terrain_valid_response->local_grid_type_name(), std::move(occ_msg));
+    }
   }
 
-  // Process Terrain Grids and publish 
-  terrain_grid_initialized_ = true;
 }
 
 void LocalGridPublisher::unpackKnownGridData(const bosdyn::api::LocalGrid& local_grid_proto, std::vector<float>& unpacked_known_data) const {
@@ -286,7 +293,7 @@ void LocalGridPublisher::unpackKnownGridData(const bosdyn::api::LocalGrid& local
 
   if (local_grid_proto.encoding() == bosdyn::api::LocalGrid_Encoding_ENCODING_RLE) {
         const auto& rle_counts = local_grid_proto.rle_counts();
-        if (initial_unpacked_data.size() != rle_counts.size()) {
+        if (initial_unpacked_data.size() != static_cast<size_t>(rle_counts.size())) {
             logger_->logError("RLE data and counts have mismatched sizes.");
             unpacked_known_data.clear();
             return;
@@ -413,6 +420,12 @@ nav_msgs::msg::OccupancyGrid::UniquePtr LocalGridPublisher::processNonTerrainGri
       msg->data.push_back(static_cast<int8_t>(std::max(-128.0, std::min(127.0, val - 128.0))));
     }
   }
+  else if(grid_proto.local_grid_type_name() == "terrain_valid"){
+    // Terrain Validity 0 and 1 are scaled to 0 and 100
+    for (const float val : unpacked_known_data) {
+      msg->data.push_back(static_cast<int8_t>(val * 100));
+    }
+  }
   return msg;
 }
 
@@ -456,35 +469,34 @@ void LocalGridPublisher::processTerrainGrid(const ::bosdyn::api::LocalGridRespon
   processed_grids.main_grid->info.origin = rosPose;
 
   std::vector<float> unpacked_known_terrain_data, unpacked_terrain_valid_data;
-  std::vector<uint8_t> unpacked_unknown_terrain_data;
+
   // Unpack Terrain Grid 
   unpackKnownGridData(terrain_grid_proto, unpacked_known_terrain_data); 
-  unpackUnknownGridData(terrain_grid_proto, unpacked_unknown_terrain_data);
 
   // Unpack Terrain Valid
   unpackKnownGridData(terrain_valid_proto, unpacked_terrain_valid_data); 
 
+  // std::cout << "max: " << *std::max_element(unpacked_known_terrain_data.begin(), unpacked_known_terrain_data.end()) << " min: " << *std::min_element(unpacked_known_terrain_data.begin(), unpacked_known_terrain_data.end()) << std::endl;
   // Scale Terrain Data
   for(size_t i = 0; i < unpacked_known_terrain_data.size(); ++i){
+
+    if(unpacked_known_terrain_data.size() != unpacked_terrain_valid_data.size()){
+      logger_->logWarn("Terrain and Terrain Valid Sizes are different. Not publishing!");
+      return;
+    }
     // The scales terrain height range of -1.0 to 1.0 -> -100 to 100
     // We also clamp the value to ensure it's within the valid range.
-    // Unknown terrain height is set to 0. Invalid is also set to -128 (TBD after testing)
-    bool known_terrain = unpacked_unknown_terrain_data[i] == 0;
+    // Unknown terrain height is set to 0 (assumes free space)
     bool valid_terrain = unpacked_terrain_valid_data[i] == 1;
 
     if(valid_terrain){
-      if(known_terrain){
-        float val = unpacked_known_terrain_data[i];
+        float val = unpacked_known_terrain_data[i]; 
         processed_grids.main_grid->data.push_back(static_cast<int8_t>(std::max(-100.0, std::min(100.0, val * 100.0))));
-      }
-      else{
-        processed_grids.main_grid->data.push_back(0);
-      }
     } else{
-      processed_grids.main_grid->data.push_back(-128);
+      processed_grids.main_grid->data.push_back(0);
     }
   }
-  
+
   if(std::find(standard_grids_to_publish_.begin(), standard_grids_to_publish_.end(), "terrain_valid") != standard_grids_to_publish_.end()){
     auto msg = std::make_unique<nav_msgs::msg::OccupancyGrid>();
     msg->header = processed_grids.main_grid->header;
@@ -494,7 +506,8 @@ void LocalGridPublisher::processTerrainGrid(const ::bosdyn::api::LocalGridRespon
     msg->info.map_load_time = msg->header.stamp;
 
     for(float val: unpacked_terrain_valid_data){
-        msg->data.push_back(static_cast<int8_t>(val));
+      // 0 and 1 are scaled to 0 and 100
+      msg->data.push_back(static_cast<int8_t>(val * 100));
     }
 
     processed_grids.secondary_grid = std::move(msg);
