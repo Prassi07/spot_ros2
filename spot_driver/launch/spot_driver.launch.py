@@ -176,6 +176,16 @@ def launch_setup(context: LaunchContext, ld: LaunchDescription) -> None:
     )
     ld.add_action(spot_image_publishers)
 
+    spot_local_grids_publisher = Node(
+        package="spot_driver",
+        executable="local_grid_publisher_node",
+        output="screen",
+        parameters=[configured_params],
+        namespace=spot_name,
+        condition=IfCondition(LaunchConfiguration("launch_local_grids")),
+    )
+    ld.add_action(spot_local_grids_publisher)
+    
     spot_ros2_control = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             PathJoinSubstitution([FindPackageShare("spot_ros2_control"), "launch", "spot_ros2_control.launch.py"])
@@ -257,6 +267,13 @@ def generate_launch_description() -> LaunchDescription:
             "robot_description_package",
             default_value="spot_description",
             description="Package from where the robot model description is. Must have path /urdf/spot.urdf.xacro",
+        )
+    )
+    launch_args.append(
+        DeclareBooleanLaunchArgument(
+            "launch_local_grids",
+            default_value=False,
+            description="Choose whether to launch the local_grids publishing nodes from Spot.",
         )
     )
     launch_args += declare_image_publisher_args()

@@ -55,5 +55,5 @@
     gripperless: False
     
     # Local Grids to be Published 
-    local_grid_names: ["terrain"]
+    local_grid_names: ["obstacle_distance", "no_step"]
     publish_scandots: False
