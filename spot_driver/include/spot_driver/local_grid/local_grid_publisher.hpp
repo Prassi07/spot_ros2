@@ -71,12 +71,9 @@ class LocalGridPublisher {
    * @param local_grid_proto The protobuf message received from Spot.
    * @param unpacked_data The unpacked data cast to float from the protobuf message based on encoding (Using float makes it resuable for different local grid types)
    */
-  void unpackGridData(const bosdyn::api::LocalGrid& local_grid_proto, std::vector<float>& unpacked_data) const;
-
-  /**
-   * @brief Unpack data if it is encoded as RLE
-   */
-  std::string unpackRleGridData(const std::string& rle_data) const;
+  void unpackKnownGridData(const bosdyn::api::LocalGrid& local_grid_proto, std::vector<float>& unpacked_known_data) const;
+  
+  void unpackUnknownGridData(const bosdyn::api::LocalGrid& local_grid_proto, std::vector<uint8_t>& unpacked_unknown_data) const;
 
 
   /**

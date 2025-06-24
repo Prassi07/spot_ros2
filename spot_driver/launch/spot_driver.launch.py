@@ -182,7 +182,7 @@ def launch_setup(context: LaunchContext, ld: LaunchDescription) -> None:
         output="screen",
         parameters=[configured_params],
         namespace=spot_name,
-        condition=IfCondition(LaunchConfiguration("launch_local_grids")),
+        condition=IfCondition(LaunchConfiguration("publish_local_grids")),
     )
     ld.add_action(spot_local_grids_publisher)
     
@@ -271,7 +271,7 @@ def generate_launch_description() -> LaunchDescription:
     )
     launch_args.append(
         DeclareBooleanLaunchArgument(
-            "launch_local_grids",
+            "publish_local_grids",
             default_value=False,
             description="Choose whether to launch the local_grids publishing nodes from Spot.",
         )

@@ -74,11 +74,10 @@ void LocalGridPublisherNode::initialize(std::unique_ptr<SpotApi> spot_api,
     throw std::runtime_error(error_msg);
   }
 
-  internal_ = std::make_unique<LocalGridPublisher>(spot_api_->localGridClientInterface(), spot_api->stateClientInterface(),
+  internal_ = std::make_unique<LocalGridPublisher>(spot_api_->localGridClientInterface(), spot_api_->stateClientInterface(),
                                                    std::move(mw_handle), std::move(parameters),
                                                    std::move(logger), std::move(timer));
                                                    
-
   if (!internal_->initialize()) {
     constexpr auto error_msg{"Failed to initialize Local Grid publisher."};
     logger->logError(error_msg);
