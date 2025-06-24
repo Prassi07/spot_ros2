@@ -69,9 +69,15 @@ class LocalGridPublisher {
   /**
    * @brief Unpacks a LocalGrid's raw data into a more usable format based on its encoding.
    * @param local_grid_proto The protobuf message received from Spot.
-   * @return A vector of bytes representing the decoded grid data.
+   * @param unpacked_data The unpacked data cast to float from the protobuf message based on encoding (Using float makes it resuable for different local grid types)
    */
-  // std::vector<uint8_t> unpackGridData(const ::bosdyn::api::LocalGrid& local_grid_proto) const;
+  void unpackGridData(const bosdyn::api::LocalGrid& local_grid_proto, std::vector<float>& unpacked_data) const;
+
+  /**
+   * @brief Unpack data if it is encoded as RLE
+   */
+  std::string unpackRleGridData(const std::string& rle_data) const;
+
 
   /**
    * @brief Processes a single grid type into a ROS OccupancyGrid message.
@@ -100,9 +106,11 @@ class LocalGridPublisher {
   std::vector<std::string> standard_grids_to_publish_, standard_grids_to_request_;
   std::set<SpotLocalGrid> grids_requested_;
 
-  bool publish_scandots_, terrain_grid_initialized_;
+  bool publish_scandots_, terrain_grid_initialized_, is_using_vision_;
   ::bosdyn::api::FrameTreeSnapshot tf_snapshot_;
   ::bosdyn::api::RobotState robot_state_;
+
+  ::bosdyn::api::SE3Pose tf_body_pose_;
 
   std::string tf_root_, frame_prefix_, full_tf_root_id_;
   std::shared_ptr<nav_msgs::msg::OccupancyGrid> terrain_grid_data_;

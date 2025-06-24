@@ -52,6 +52,8 @@ bool LocalGridPublisher::initialize() {
 
   tf_root_ = param_interface_->getTFRoot();
   frame_prefix_ = param_interface_->getFramePrefixWithDefaultFallback();
+  is_using_vision_ = param_interface_->getPreferredOdomFrame() == "vision";
+
   full_tf_root_id_ = frame_prefix_ + tf_root_;
 
   logger_->logInfo("LocalGridPublisher initialized.");
@@ -148,7 +150,20 @@ void LocalGridPublisher::localGridTimerCallback() {
     return;
   }
 
-  tf_snapshot_ = state_result.value().kinematic_state().transforms_snapshot();
+  if(state_result.value().has_kinematic_state()){
+    tf_snapshot_ = state_result.value().kinematic_state().transforms_snapshot();
+
+    if(is_using_vision_){
+      if (!::bosdyn::api::GetWorldTformBody(tf_snapshot_, &tf_body_pose_)) {
+        logger_->logWarn("Failed to get robot odometry info, incorrect downsampled grid");
+      }
+    }
+    else {
+      if (!::bosdyn::api::GetOdomTformBody(tf_snapshot_, &tf_body_pose_)) {
+        logger_->logWarn("Failed to get robot odometry info, incorrect downsampled grid");
+      }
+    }
+  }
   
   // Handle the special case of the 'terrain' grid first.
   // if (std::find(standard_grids_to_publish_.begin(), standard_grids_to_publish_.end(), "terrain") !=
@@ -192,16 +207,112 @@ void LocalGridPublisher::localGridTimerCallback() {
   terrain_grid_initialized_ = true;
 }
 
-// std::vector<uint8_t> LocalGridPublisher::unpackGridData(const bosdyn::api::LocalGrid& local_grid_proto) const {
-//   // This function can be expanded to handle RLE, but for now we assume RAW encoding
-//   // as it is most common for the int16 and uint8 grids.
-//   if (local_grid_proto.encoding() == bosdyn::api::LocalGrid_Encoding_ENCODING_RAW) {
-//     const auto& raw_data = local_grid_proto.data();
-//     return {raw_data.begin(), raw_data.end()};
-//   }
-//   logger_->logWarn("Grid unpacking for RLE encoding is not yet implemented.");
-//   return {};
-// }
+std::string LocalGridPublisher::unpackRleGridData(const std::string& rle_data) const {
+    std::string out_grid_bytes;
+    size_t rle_offset = 0;
+    while (rle_offset < rle_data.size()) {
+        const uint8_t value = rle_data[rle_offset++];
+        if (value == 0) break;
+        if (rle_offset >= rle_data.size()) {
+            logger_->logError("Invalid RLE data: count byte is missing.");
+            return {};
+        }
+        const uint8_t count = rle_data[rle_offset++];
+        for (int i = 0; i < count + 1; ++i) {
+            out_grid_bytes.push_back(value - 1);
+        }
+    }
+    return out_grid_bytes;
+}
+
+
+void LocalGridPublisher::unpackGridData(const bosdyn::api::LocalGrid& local_grid_proto, std::vector<float>& unpacked_data) const {
+
+  const std::string* bytes_to_process;
+  std::string decoded_rle_bytes; // Use a local string to hold decoded data if needed
+
+  if (local_grid_proto.encoding() == bosdyn::api::LocalGrid_Encoding_ENCODING_RLE) {
+      decoded_rle_bytes = unpackRleGridData(local_grid_proto.data());
+      bytes_to_process = &decoded_rle_bytes;
+  } else {
+      bytes_to_process = &local_grid_proto.data();
+  }
+  // Convert bytes to different data types based on format, and then finally cast it to float.
+  const auto& byte_data_str = *bytes_to_process;
+  const auto cell_format = local_grid_proto.cell_format();
+  
+  const double scale_from_proto = local_grid_proto.cell_value_scale();
+  const double scale_to_use = (std::abs(scale_from_proto) > 1e-9) ? scale_from_proto : 1.0;
+  const double offset_to_use = local_grid_proto.cell_value_offset();
+
+  unpacked_data.clear();
+
+  switch(cell_format) {
+      case bosdyn::api::LocalGrid::CELL_FORMAT_FLOAT32: {
+        if (byte_data_str.size() % sizeof(float) != 0) 
+          return;
+        unpacked_data.reserve(byte_data_str.size() / sizeof(float));
+        for(size_t i=0; i < byte_data_str.size(); i += sizeof(float)) {
+            float val;
+            memcpy(&val, &byte_data_str[i], sizeof(float));
+            unpacked_data.push_back((static_cast<double>(val) * scale_to_use) + offset_to_use);
+        }
+        break;
+      }
+      case bosdyn::api::LocalGrid::CELL_FORMAT_FLOAT64: {
+        if (byte_data_str.size() % sizeof(double) != 0) 
+          return;
+        unpacked_data.reserve(byte_data_str.size() / sizeof(double));
+        for(size_t i=0; i < byte_data_str.size(); i += sizeof(double)) {
+            double val;
+            memcpy(&val, &byte_data_str[i], sizeof(double));
+            unpacked_data.push_back((val * scale_to_use) + offset_to_use);
+        }
+        break;
+      }
+      case bosdyn::api::LocalGrid::CELL_FORMAT_INT16: {
+        if (byte_data_str.size() % sizeof(int16_t) != 0) 
+          return;
+        unpacked_data.reserve(byte_data_str.size() / sizeof(int16_t));
+        for(size_t i=0; i < byte_data_str.size(); i += sizeof(int16_t)) {
+            int16_t val;
+            memcpy(&val, &byte_data_str[i], sizeof(int16_t));
+            unpacked_data.push_back((static_cast<double>(val) * scale_to_use) + offset_to_use);
+        }
+        break;
+      }
+      case bosdyn::api::LocalGrid::CELL_FORMAT_UINT16: {
+        if (byte_data_str.size() % sizeof(uint16_t) != 0) 
+          return;
+        unpacked_data.reserve(byte_data_str.size() / sizeof(uint16_t));
+        for(size_t i=0; i < byte_data_str.size(); i += sizeof(uint16_t)) {
+            uint16_t val;
+            memcpy(&val, &byte_data_str[i], sizeof(uint16_t));
+            unpacked_data.push_back((static_cast<double>(val) * scale_to_use) + offset_to_use);
+        }
+        break;
+      }
+      case bosdyn::api::LocalGrid::CELL_FORMAT_INT8: {
+        unpacked_data.reserve(byte_data_str.size());
+        for(char val : byte_data_str) {
+            unpacked_data.push_back((static_cast<double>(static_cast<int8_t>(val)) * scale_to_use) + offset_to_use);
+        }
+        break;
+      }
+      case bosdyn::api::LocalGrid::CELL_FORMAT_UINT8: {
+        unpacked_data.reserve(byte_data_str.size());
+        for(unsigned char val : byte_data_str) {
+            unpacked_data.push_back((static_cast<double>(val) * scale_to_use) + offset_to_use);
+        }
+        break;
+      }
+      default: {
+          logger_->logWarn("Unhandled cell format in unpackGridData.");
+          break;
+      }
+  }
+
+}
 
 nav_msgs::msg::OccupancyGrid::UniquePtr LocalGridPublisher::processNonTerrainGrid(
     const ::bosdyn::api::LocalGridResponse& grid_response) const {
@@ -219,32 +330,50 @@ nav_msgs::msg::OccupancyGrid::UniquePtr LocalGridPublisher::processNonTerrainGri
   msg->info.height = grid_proto.extent().num_cells_y();
   msg->header.frame_id = full_tf_root_id_;
 
-  const auto& extent = grid_proto.extent();
-
   std::string grid_frame_id = grid_proto.frame_name_local_grid_data();
 
-  ::bosdyn::api::SE3Pose* transform = new ::bosdyn::api::SE3Pose();
-  ::bosdyn::api::SE3Pose* ground_plane_tf = new ::bosdyn::api::SE3Pose();
-  ::bosdyn::api::get_a_tform_b(grid_proto.transforms_snapshot(), tf_root_, grid_frame_id, transform); 
+  ::bosdyn::api::SE3Pose transform, ground_plane_tf; 
+  if(::bosdyn::api::get_a_tform_b(grid_proto.transforms_snapshot(), tf_root_, grid_frame_id, &transform)){
+    if(::bosdyn::api::get_a_tform_b(tf_snapshot_, tf_root_, ::bosdyn::api::kGroundPlaneEstimateFrame, &ground_plane_tf)){
+      transform.mutable_position()->set_z(ground_plane_tf.position().z());
+    }
+    else{
+      logger_->logWarn("Error while getting transform to ground plane to tf_root");
+    }
+  }
+  else{
+    logger_->logError("Failed while getting transform to tf_root");
+  }
 
-  ::bosdyn::api::get_a_tform_b(tf_snapshot_, tf_root_, ::bosdyn::api::kGroundPlaneEstimateFrame, ground_plane_tf);
-  
-  transform->mutable_position()->set_z(ground_plane_tf->position().z());
-  
   geometry_msgs::msg::Pose rosPose;
-  convertToRos(*transform, rosPose);
+  convertToRos(transform, rosPose);
 
   msg->info.origin = rosPose;
 
-  // auto unpacked_data = unpackGridData(grid_proto);
-  // if (unpacked_data.empty()) {
-  //   return nullptr;
-  // }
+  std::vector<float> unpacked_data;
+  unpackGridData(grid_proto, unpacked_data); 
 
-  // Convert to int8_t for the final message. This is a naive conversion.
-  // Real implementation would need to know the meaning of the data for each grid type.
-  // msg->data.assign(unpacked_data.begin(), unpacked_data.end());
-
+  // Different scaling based on terrain grid type
+  if(grid_proto.local_grid_type_name() == "obstacle_distance"){
+    for (const float val : unpacked_data) {
+          // The scales distance range of -3 to 3 -> -128 to 127
+          // This is a linear scaling: (val / 3.0) * 127.0
+          // We also clamp the value to ensure it's within the valid range.
+          const double scaled_value = (val / 3.0) * 127.0;
+          msg->data.push_back(static_cast<int8_t>(std::max(-128.0, std::min(127.0, scaled_value))));
+        
+    }
+  }
+  else if(grid_proto.local_grid_type_name() == "no_step"){
+    for (const float val : unpacked_data) {
+          // The transforms no_step 0 to 0, non-zero to 100
+          if (val > 1e-6) {
+             msg->data.push_back(100);
+          } else {
+             msg->data.push_back(0);
+          }
+    }
+  }
   return msg;
 }
 
