@@ -11,9 +11,15 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <optional>
 #include <spot_driver/interfaces/rclcpp_wall_timer_interface.hpp>
 
 namespace spot_ros2 {
+
+struct ProcessedGridResult {
+    nav_msgs::msg::OccupancyGrid::SharedPtr main_grid;
+    std::optional<nav_msgs::msg::OccupancyGrid::UniquePtr> secondary_grid;
+};
 
 /**
  * @brief Handles the core logic of requesting, processing, and publishing local grid data.
@@ -36,6 +42,10 @@ class LocalGridPublisher {
     virtual tl::expected<void, std::string> publishSpecificOccupancyGrid(
         const std::string& grid_name, 
         nav_msgs::msg::OccupancyGrid::UniquePtr message) = 0;
+    
+    virtual tl::expected<void, std::string> publishSpecificOccupancyGrid(
+        const std::string& grid_name, 
+        nav_msgs::msg::OccupancyGrid::SharedPtr message) = 0;
   };
  
  
@@ -79,7 +89,7 @@ class LocalGridPublisher {
   /**
    * @brief Processes a single grid type into a ROS OccupancyGrid message.
    * @param grid_response The LocalGridResponse protobuf for a single grid type.
-   * @return A unique_ptr to the generated nav_msgs::msg::OccupancyGrid. Returns nullptr on failure.
+   * @return A unique_ptr to the generated nav_msgs::msg::OccupancyGrid.
    */
   nav_msgs::msg::OccupancyGrid::UniquePtr processNonTerrainGrid(const ::bosdyn::api::LocalGridResponse& grid_response) const;
 
@@ -87,10 +97,11 @@ class LocalGridPublisher {
    * @brief Processes the special 'terrain' grid, which requires combining it with the 'terrain_valid' grid.
    * @param terrain_grid The LocalGrid protobuf for the 'terrain' data.
    * @param valid_grid The LocalGrid protobuf for the 'terrain_valid' data.
-   * @return A unique_ptr to the generated nav_msgs::msg::OccupancyGrid. Returns nullptr on failure.
-   */
-  // nav_msgs::msg::OccupancyGrid::UniquePtr processTerrainGrid(const ::bosdyn::api::LocalGrid& terrain_grid,
-  //                                                            const ::bosdyn::api::LocalGrid& valid_grid ) const;
+   * @param processed_grids Updated ProcessedGridResult object that contains the terrain grid and the optional terrain_valid grid
+  */
+  void processTerrainGrid(const ::bosdyn::api::LocalGridResponse& terrain_grid,
+                          const ::bosdyn::api::LocalGridResponse& valid_grid,
+                          ProcessedGridResult& processed_grids) const;
   
   std::unique_ptr<LoggerInterfaceBase> logger_;
   std::unique_ptr<ParameterInterfaceBase> param_interface_;

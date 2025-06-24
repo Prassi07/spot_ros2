@@ -161,31 +161,20 @@ void LocalGridPublisher::localGridTimerCallback() {
     }
   }
   
-  // Handle the special case of the 'terrain' grid first.
-  // if (std::find(standard_grids_to_publish_.begin(), standard_grids_to_publish_.end(), "terrain") !=
-  //     standard_grids_to_publish_.end()) {
-  //   const auto* terrain_response =
-  //       std::find_if(responses.cbegin(), responses.cend(), [](const auto& r) { return r.local_grid_type_name() == "terrain"; });
-  //   const auto* valid_response = std::find_if(
-  //       responses.cbegin(), responses.cend(), [](const auto& r) { return r.local_grid_type_name() == "terrain_valid"; });
+  // Process NON-TERRAIN GRID first
+  const ::bosdyn::api::LocalGridResponse *terrain_response, *terrain_valid_response;
+  bool publish_terrain_grids = false;
 
-  //   if (terrain_response != responses.cend() && valid_response != responses.cend()) {
-  //     auto terrain_occ_msg = processTerrainGrid(terrain_response->local_grid(), valid_response->local_grid());
-  //     if (terrain_occ_msg) {
-  //       // Keep a shared_ptr to this message in case we need it for downsampling.
-  //       terrain_msg_for_downsample = terrain_occ_msg;
-  //       middleware_handle_->publishSpecificOccupancyGrid("terrain", std::move(terrain_occ_msg));
-  //     }
-  //   } else {
-  //     logger_->logWarn("Requested 'terrain' grid but did not receive both 'terrain' and 'terrain_valid' from robot.");
-  //   }
-  // }
-
-  // Process NON-TERRAIN GRID
   for (const ::bosdyn::api::LocalGridResponse& response : responses) {
     const auto& name = response.local_grid_type_name();
     // Skip 'terrain' and 'terrain_valid' since we've already handled them.
-    if (name == "terrain" || name == "terrain_valid") {
+    if (name == "terrain"){
+      terrain_response = &response;
+      publish_terrain_grids = true;
+      continue;
+    }
+    if (name == "terrain_valid") {
+      terrain_valid_response = &response;
       continue;
     }
 
@@ -200,6 +189,19 @@ void LocalGridPublisher::localGridTimerCallback() {
     }
   }
 
+  if(publish_terrain_grids){
+    ProcessedGridResult terrain_grids;
+    processTerrainGrid(*terrain_response, *terrain_valid_response, terrain_grids);
+
+    terrain_grid_data_ = terrain_grids.main_grid;    
+    middleware_handle_->publishSpecificOccupancyGrid(terrain_response->local_grid_type_name(), terrain_grids.main_grid);
+    
+    if(terrain_grids.secondary_grid.has_value()){
+      middleware_handle_->publishSpecificOccupancyGrid(terrain_valid_response->local_grid_type_name(), std::move(terrain_grids.secondary_grid.value()));
+    }
+  }
+
+  // Process Terrain Grids and publish 
   terrain_grid_initialized_ = true;
 }
 
@@ -414,51 +416,90 @@ nav_msgs::msg::OccupancyGrid::UniquePtr LocalGridPublisher::processNonTerrainGri
   return msg;
 }
 
-// nav_msgs::msg::OccupancyGrid::UniquePtr LocalGridPublisher::processTerrainGrid(
-//     const bosdyn::api::LocalGrid& terrain_grid, const bosdyn::api::LocalGrid& valid_grid) const {
-//   if (terrain_grid.extent().num_cells_x() != valid_grid.extent().num_cells_x() ||
-//       terrain_grid.extent().num_cells_y() != valid_grid.extent().num_cells_y()) {
-//     logger_->logError("Mismatch in dimensions between 'terrain' and 'terrain_valid' grids.");
-//     return nullptr;
-//   }
+void LocalGridPublisher::processTerrainGrid(const ::bosdyn::api::LocalGridResponse& terrain_grid,
+                                             const ::bosdyn::api::LocalGridResponse& valid_grid,
+                                             ProcessedGridResult& processed_grids) const {
 
-//   auto msg = std::make_unique<nav_msgs::msg::OccupancyGrid>();
-//   msg->header.stamp = toRosTime(terrain_grid.acquisition_time());
-//   msg->header.frame_id = terrain_grid.frame_name_local_grid_data();
-//   msg->info.map_load_time = msg->header.stamp;
-//   msg->info.resolution = terrain_grid.extent().cell_size();
-//   msg->info.width = terrain_grid.extent().num_cells_x();
-//   msg->info.height = terrain_grid.extent().num_cells_y();
-//   const auto& extent = terrain_grid.extent();
-//   msg->info.origin.position.x = extent.cell_size() * (0.5 - extent.num_cells_x() / 2.0);
-//   msg->info.origin.position.y = extent.cell_size() * (0.5 - extent.num_cells_y() / 2.0);
+  processed_grids.main_grid = std::make_shared<nav_msgs::msg::OccupancyGrid>();
 
-//   auto terrain_data_unpacked = unpackGridData(terrain_grid);
-//   auto valid_data_unpacked = unpackGridData(valid_grid);
+  const ::bosdyn::api::LocalGrid& terrain_grid_proto = terrain_grid.local_grid();
+  const ::bosdyn::api::LocalGrid& terrain_valid_proto = valid_grid.local_grid();
 
-//   if (terrain_data_unpacked.size() / 2 != valid_data_unpacked.size()) {
-//     logger_->logError("Mismatch in unpacked data size between 'terrain' (int16) and 'terrain_valid' (uint8).");
-//     return nullptr;
-//   }
+  // Populate header and info (same as terrain grid)
+  processed_grids.main_grid->header.stamp.sec =  terrain_grid_proto.acquisition_time().seconds();
+  processed_grids.main_grid->header.stamp.nanosec = terrain_grid_proto.acquisition_time().nanos();
 
-//   std::vector<int16_t> terrain_data(terrain_data_unpacked.size() / 2);
-//   memcpy(terrain_data.data(), terrain_data_unpacked.data(), terrain_data_unpacked.size());
+  processed_grids.main_grid->info.map_load_time = processed_grids.main_grid->header.stamp;
+  processed_grids.main_grid->info.resolution = terrain_grid_proto.extent().cell_size();
+  processed_grids.main_grid->info.width = terrain_grid_proto.extent().num_cells_x();
+  processed_grids.main_grid->info.height = terrain_grid_proto.extent().num_cells_y();
+  processed_grids.main_grid->header.frame_id = full_tf_root_id_;
 
-//   msg->data.reserve(valid_data_unpacked.size());
-//   for (size_t i = 0; i < valid_data_unpacked.size(); ++i) {
-//     if (valid_data_unpacked[i] == 0) {
-//       msg->data.push_back(-1);  // Unknown
-//     } else {
-//       // Simple logic: if terrain is not flat (value != 0), it's occupied.
-//       if (terrain_data[i] != 0) {
-//         msg->data.push_back(100);  // Occupied
-//       } else {
-//         msg->data.push_back(0);  // Free
-//       }
-//     }
-//   }
-//   return msg;
-// }
+  std::string grid_frame_id = terrain_grid_proto.frame_name_local_grid_data();
+
+  ::bosdyn::api::SE3Pose transform, ground_plane_tf; 
+  if(::bosdyn::api::get_a_tform_b(terrain_grid_proto.transforms_snapshot(), tf_root_, grid_frame_id, &transform)){
+    if(::bosdyn::api::get_a_tform_b(tf_snapshot_, tf_root_, ::bosdyn::api::kGroundPlaneEstimateFrame, &ground_plane_tf)){
+      transform.mutable_position()->set_z(ground_plane_tf.position().z());
+    }
+    else{
+      logger_->logWarn("Error while getting transform to ground plane to tf_root");
+    }
+  }
+  else{
+    logger_->logError("Failed while getting transform to tf_root");
+  }
+
+  geometry_msgs::msg::Pose rosPose;
+  convertToRos(transform, rosPose);
+
+  processed_grids.main_grid->info.origin = rosPose;
+
+  std::vector<float> unpacked_known_terrain_data, unpacked_terrain_valid_data;
+  std::vector<uint8_t> unpacked_unknown_terrain_data;
+  // Unpack Terrain Grid 
+  unpackKnownGridData(terrain_grid_proto, unpacked_known_terrain_data); 
+  unpackUnknownGridData(terrain_grid_proto, unpacked_unknown_terrain_data);
+
+  // Unpack Terrain Valid
+  unpackKnownGridData(terrain_valid_proto, unpacked_terrain_valid_data); 
+
+  // Scale Terrain Data
+  for(size_t i = 0; i < unpacked_known_terrain_data.size(); ++i){
+    // The scales terrain height range of -1.0 to 1.0 -> -100 to 100
+    // We also clamp the value to ensure it's within the valid range.
+    // Unknown terrain height is set to 0. Invalid is also set to -128 (TBD after testing)
+    bool known_terrain = unpacked_unknown_terrain_data[i] == 0;
+    bool valid_terrain = unpacked_terrain_valid_data[i] == 1;
+
+    if(valid_terrain){
+      if(known_terrain){
+        float val = unpacked_known_terrain_data[i];
+        processed_grids.main_grid->data.push_back(static_cast<int8_t>(std::max(-100.0, std::min(100.0, val * 100.0))));
+      }
+      else{
+        processed_grids.main_grid->data.push_back(0);
+      }
+    } else{
+      processed_grids.main_grid->data.push_back(-128);
+    }
+  }
+  
+  if(std::find(standard_grids_to_publish_.begin(), standard_grids_to_publish_.end(), "terrain_valid") != standard_grids_to_publish_.end()){
+    auto msg = std::make_unique<nav_msgs::msg::OccupancyGrid>();
+    msg->header = processed_grids.main_grid->header;
+    msg->info = processed_grids.main_grid->info;
+    msg->header.stamp.sec =  terrain_valid_proto.acquisition_time().seconds();
+    msg->header.stamp.nanosec =  terrain_valid_proto.acquisition_time().nanos();
+    msg->info.map_load_time = msg->header.stamp;
+
+    for(float val: unpacked_terrain_valid_data){
+        msg->data.push_back(static_cast<int8_t>(val));
+    }
+
+    processed_grids.secondary_grid = std::move(msg);
+  }
+}
 
 void LocalGridPublisher::downsampledGridTimerCallback() {
   

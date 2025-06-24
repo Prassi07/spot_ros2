@@ -49,6 +49,19 @@ namespace spot_ros2 {
         }
 
         return {};
-    } 
+    }
+    
+    tl::expected<void, std::string> LocalGridMiddlewareHandle::publishSpecificOccupancyGrid(
+         const std::string& grid_name, 
+         nav_msgs::msg::OccupancyGrid::SharedPtr message) {
+
+        try {
+            grid_publishers_.at(grid_name)->publish(*message);
+        } catch (const std::out_of_range& e) {
+            return tl::make_unexpected("No grid publisher exists for grid name `" + grid_name + "`.");
+        }
+
+        return {};
+    }
 
 }  // namespace spot_ros2

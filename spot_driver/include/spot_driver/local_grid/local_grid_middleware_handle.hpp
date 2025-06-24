@@ -52,12 +52,27 @@ class LocalGridMiddlewareHandle : public LocalGridPublisher::MiddlewareHandle {
    * For example, a `grid_name` of "terrain" might be published to the "/local_grid/terrain" topic.
    *
    * @param grid_name The abstract name of the grid to publish (e.g., "terrain", "DownsampledScanDots").
-   * @param message A unique pointer to the message to be published.
+   * @param message A unique pointer to the message to be published
    * @return True if a publisher existed for the given name and the message was published, false otherwise.
    */
   tl::expected<void, std::string> publishSpecificOccupancyGrid(
     const std::string& grid_name, 
     nav_msgs::msg::OccupancyGrid::UniquePtr message
+  ) override;
+
+  /**
+   * @brief Publish an OccupancyGrid message to a specific topic.
+   *
+   * The implementation will map the abstract `grid_name` to a concrete middleware topic.
+   * For example, a `grid_name` of "terrain" might be published to the "/local_grid/terrain" topic.
+   *
+   * @param grid_name The abstract name of the grid to publish (e.g., "terrain", "DownsampledScanDots").
+   * @param message A shared pointer to the message to be published
+   * @return True if a publisher existed for the given name and the message was published, false otherwise.
+   */
+  tl::expected<void, std::string> publishSpecificOccupancyGrid(
+    const std::string& grid_name, 
+    nav_msgs::msg::OccupancyGrid::SharedPtr message
   ) override;
 
   private:
