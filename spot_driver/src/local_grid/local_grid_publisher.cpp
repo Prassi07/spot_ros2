@@ -451,9 +451,12 @@ void LocalGridPublisher::processTerrainGrid(const ::bosdyn::api::LocalGridRespon
   std::string grid_frame_id = terrain_grid_proto.frame_name_local_grid_data();
 
   ::bosdyn::api::SE3Pose transform, ground_plane_tf; 
+  double ground_plane_z = 0.0;
+  
   if(::bosdyn::api::get_a_tform_b(terrain_grid_proto.transforms_snapshot(), tf_root_, grid_frame_id, &transform)){
     if(::bosdyn::api::get_a_tform_b(tf_snapshot_, tf_root_, ::bosdyn::api::kGroundPlaneEstimateFrame, &ground_plane_tf)){
-      transform.mutable_position()->set_z(ground_plane_tf.position().z());
+      ground_plane_z = ground_plane_tf.position().z();
+      transform.mutable_position()->set_z(ground_plane_z);
     }
     else{
       logger_->logWarn("Error while getting transform to ground plane to tf_root");
@@ -476,7 +479,6 @@ void LocalGridPublisher::processTerrainGrid(const ::bosdyn::api::LocalGridRespon
   // Unpack Terrain Valid
   unpackKnownGridData(terrain_valid_proto, unpacked_terrain_valid_data); 
 
-  // std::cout << "max: " << *std::max_element(unpacked_known_terrain_data.begin(), unpacked_known_terrain_data.end()) << " min: " << *std::min_element(unpacked_known_terrain_data.begin(), unpacked_known_terrain_data.end()) << std::endl;
   // Scale Terrain Data
   for(size_t i = 0; i < unpacked_known_terrain_data.size(); ++i){
 
@@ -484,13 +486,15 @@ void LocalGridPublisher::processTerrainGrid(const ::bosdyn::api::LocalGridRespon
       logger_->logWarn("Terrain and Terrain Valid Sizes are different. Not publishing!");
       return;
     }
-    // The scales terrain height range of -1.0 to 1.0 -> -100 to 100
+    // Original Terrain height is in world frame. We transform it to -1 to 1 wrt ground plane z. No change in orienatation
+    // Terrain height range of -1.0 to 1.0 is scaled to -100 to 100
     // We also clamp the value to ensure it's within the valid range.
     // Unknown terrain height is set to 0 (assumes free space)
     bool valid_terrain = unpacked_terrain_valid_data[i] == 1;
 
     if(valid_terrain){
         float val = unpacked_known_terrain_data[i]; 
+        val = val - ground_plane_z;
         processed_grids.main_grid->data.push_back(static_cast<int8_t>(std::max(-100.0, std::min(100.0, val * 100.0))));
     } else{
       processed_grids.main_grid->data.push_back(0);
