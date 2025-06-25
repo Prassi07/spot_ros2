@@ -523,10 +523,10 @@ void LocalGridPublisher::downsampledGridTimerCallback() {
     return;
   }
 
-  std_msgs::msg::Header header = terrain_grid_data_->header;
-  nav_msgs::msg::MapMetaData local_metadata = terrain_grid_data_->info;
-  std::vector<int8_t> local_terrain = terrain_grid_data_->data;
-  ::bosdyn::api::SE3Pose local_body_pose = tf_body_pose_;
+  std_msgs::msg::Header& header = terrain_grid_data_->header;
+  nav_msgs::msg::MapMetaData& local_metadata = terrain_grid_data_->info;
+  std::vector<int8_t>& local_terrain = terrain_grid_data_->data;
+  ::bosdyn::api::SE3Pose& local_body_pose = tf_body_pose_;
   
   double ground_plane_z = local_metadata.origin.position.z;
   ::bosdyn::api::Quaternion yaw_only_orientation = ::bosdyn::api::ClosestYawOnly(local_body_pose.rotation());
@@ -535,26 +535,83 @@ void LocalGridPublisher::downsampledGridTimerCallback() {
                                            Eigen::Quaterniond(yaw_only_orientation.w(), yaw_only_orientation.x(), yaw_only_orientation.y(), yaw_only_orientation.z());
 
   Eigen::Affine3d body_to_world_transform = world_to_body_transform.inverse();
-  
 
-  // Define the target grid for the policy
-  const int policy_grid_width = 17; // -0.8 to 0.8 at 0.1 res
-  const int policy_grid_height = 11; // -0.5 to 0.5 at 0.1 res
-  const double policy_grid_resolution = 0.1;
+  // const int kernel_radius = 1;
+
+  // for (int iy = 0; iy < policy_grid_height; ++iy) {
+  //   for (int ix = 0; ix < policy_grid_width; ++ix) {
+
+  //     Eigen::Vector3d p_body(-0.8 + (ix + 0.5) * policy_grid_resolution, -0.5 + (iy + 0.5) * policy_grid_resolution, 0.0);
+
+  //     Eigen::Vector3d p_world = world_to_body_transform * p_body;
+
+  //     int center_hr_ix = static_cast<int>((p_world.x() - local_metadata.origin.position.x) / local_metadata.resolution);
+  //     int center_hr_iy = static_cast<int>((p_world.y() - local_metadata.origin.position.y) / local_metadata.resolution);
+      
+  //     std::vector<float> valid_heights_in_kernel;
+      
+  //     for (int dy = -kernel_radius; dy <= kernel_radius; ++dy) {
+  //       for (int dx = -kernel_radius; dx <= kernel_radius; ++dx) {
+  //         int current_hr_ix = center_hr_ix + dx;
+  //         int current_hr_iy = center_hr_iy + dy;
+          
+  //         if (current_hr_ix >= 0 && current_hr_ix < local_metadata.width && 
+  //             current_hr_iy >= 0 && current_hr_iy < local_metadata.height) {
+            
+  //           size_t hr_index = current_hr_iy * local_metadata.width + current_hr_ix;
+  //           valid_heights_in_kernel.push_back(local_terrain.at(hr_index) * 0.01f);
+  //         }
+  //       }
+  //     }
+
+  //     int8_t final_value = 0;
+  //     if (!valid_heights_in_kernel.empty()) {
+  //       const float avg_height = std::accumulate(valid_heights_in_kernel.begin(), valid_heights_in_kernel.end(), 0.0f) 
+  //                                   / valid_heights_in_kernel.size();
+        
+  //       const double height_in_world_m = avg_height + ground_plane_z;
+  //       const double policy_value = robot_z_in_world - height_in_world_m - 0.5;
+        
+  //       const double scaled_value = policy_value * 100.0;
+  //       final_value = static_cast<int8_t>(std::max(-100.0, std::min(100.0, scaled_value)));
+  //     }
+      
+  //     downsampled_msg->data[iy * policy_grid_width + ix] = final_value;
+  //   }
+  // }
+
+
+  // NEW: A vector of frequency maps, one for each policy grid cell.
+  std::vector<std::map<int, int>> histogram_accumulator(num_policy_cells_);
+
+  for(unsigned int hr_y = 0; hr_y < local_metadata.height; ++hr_y) {
+    for(unsigned int hr_x = 0; hr_x < local_metadata.width; ++hr_x) {
+      size_t hr_index = hr_y * local_metadata.width + hr_x;
+
+      Eigen::Vector3d p_hires((hr_x * local_metadata.resolution) + local_metadata.origin.position.x, (hr_y * local_metadata.resolution) + local_metadata.origin.position.y, 0.0);
+      
+      Eigen::Vector3d p_body = body_to_world_transform * p_hires;
+
+      if (p_body.x() >= -0.8 && p_body.x() < 0.9 && p_body.y() >= -0.5 && p_body.y() < 0.6) {
+        
+        int policy_ix = static_cast<int>((p_body.x() + 0.8) / policy_grid_resolution_);
+        int policy_iy = static_cast<int>((p_body.y() + 0.5) / policy_grid_resolution_);
+        
+        size_t policy_index = policy_iy * policy_grid_width_ + policy_ix;
+        
+        // Increment the count for this height in the corresponding policy cell's histogram.
+        histogram_accumulator[policy_index][local_terrain[hr_index]]++;
+      }
+    }
+  }
+
 
   auto downsampled_msg = std::make_shared<nav_msgs::msg::OccupancyGrid>();
   downsampled_msg->header.stamp = local_metadata.map_load_time;
   downsampled_msg->header.frame_id = full_tf_root_id_;
-  downsampled_msg->info.resolution = policy_grid_resolution;
-  downsampled_msg->info.width = policy_grid_width;
-  downsampled_msg->info.height = policy_grid_height;
-
-  // Transform local grid origin to global frame using robot tf
-  geometry_msgs::msg::Pose ds_grid_local_origin, ds_grid_global_origin;
-  ds_grid_local_origin.position.x = -0.8;
-  ds_grid_local_origin.position.y = -0.5;
-  ds_grid_local_origin.position.z = 0.0;
-  ds_grid_local_origin.orientation.w = 1.0;
+  downsampled_msg->info.resolution = policy_grid_resolution_;
+  downsampled_msg->info.width = policy_grid_width_;
+  downsampled_msg->info.height = policy_grid_height_;
 
   ::bosdyn::api::SE3Pose pose_yaw_only;
   pose_yaw_only.mutable_position()->set_x(local_body_pose.position().x());
@@ -562,57 +619,37 @@ void LocalGridPublisher::downsampledGridTimerCallback() {
   pose_yaw_only.mutable_position()->set_z(local_body_pose.position().z());
   pose_yaw_only.mutable_rotation()->CopyFrom(yaw_only_orientation);
 
-  geometry_msgs::msg::Transform transform;
-  convertToRos(pose_yaw_only, transform);
+  // Define the target grid for the policy
+  geometry_msgs::msg::Pose ds_grid_global_origin;
   geometry_msgs::msg::TransformStamped tf_stm;
-  tf_stm.transform = transform;
-  tf2::doTransform(ds_grid_local_origin, ds_grid_global_origin, tf_stm);
+  convertToRos(pose_yaw_only, tf_stm.transform);
+  tf2::doTransform(ds_grid_local_origin_, ds_grid_global_origin, tf_stm);
 
   downsampled_msg->info.origin = ds_grid_global_origin;
-  downsampled_msg->data.resize(policy_grid_width * policy_grid_height);
-
+  downsampled_msg->data.resize(policy_grid_width_ * policy_grid_height_);
   const double robot_z_in_world = local_body_pose.position().z();
-  const int kernel_radius = 1;
 
-  for (int iy = 0; iy < policy_grid_height; ++iy) {
-    for (int ix = 0; ix < policy_grid_width; ++ix) {
+  downsampled_msg->data.resize(num_policy_cells_);
+  
 
-      Eigen::Vector3d p_body(-0.8 + (ix + 0.5) * policy_grid_resolution, -0.5 + (iy + 0.5) * policy_grid_resolution, 0.0);
-
-      Eigen::Vector3d p_world = world_to_body_transform * p_body;
-
-      int center_hr_ix = static_cast<int>((p_world.x() - local_metadata.origin.position.x) / local_metadata.resolution);
-      int center_hr_iy = static_cast<int>((p_world.y() - local_metadata.origin.position.y) / local_metadata.resolution);
+  for(int i = 0; i < num_policy_cells_; ++i) {
+    if(!histogram_accumulator[i].empty()) {
+      // Find the most frequent height in the histogram for this cell. // Compare by count
+      auto most_frequent_element = std::max_element(
+          histogram_accumulator[i].begin(), 
+          histogram_accumulator[i].end(),
+          [](const auto& a, const auto& b) {
+              return a.second < b.second; 
+          });
       
-      std::vector<float> valid_heights_in_kernel;
-      
-      for (int dy = -kernel_radius; dy <= kernel_radius; ++dy) {
-        for (int dx = -kernel_radius; dx <= kernel_radius; ++dx) {
-          int current_hr_ix = center_hr_ix + dx;
-          int current_hr_iy = center_hr_iy + dy;
-          
-          if (current_hr_ix >= 0 && current_hr_ix < local_metadata.width && 
-              current_hr_iy >= 0 && current_hr_iy < local_metadata.height) {
-            
-            size_t hr_index = current_hr_iy * local_metadata.width + current_hr_ix;
-            valid_heights_in_kernel.push_back(local_terrain.at(hr_index) * 0.01f);
-          }
-        }
-      }
+      int modal_height = most_frequent_element->first;
 
-      int8_t final_value = 0;
-      if (!valid_heights_in_kernel.empty()) {
-        const float avg_height = std::accumulate(valid_heights_in_kernel.begin(), valid_heights_in_kernel.end(), 0.0f) 
-                                    / valid_heights_in_kernel.size();
-        
-        const double height_in_world_m = avg_height + ground_plane_z;
-        const double policy_value = robot_z_in_world - height_in_world_m - 0.5;
-        
-        const double scaled_value = policy_value * 100.0;
-        final_value = static_cast<int8_t>(std::max(-100.0, std::min(100.0, scaled_value)));
-      }
-      
-      downsampled_msg->data[iy * policy_grid_width + ix] = final_value;
+      const double height_in_world_m = static_cast<double>(modal_height) * 0.01;
+      const double policy_value = robot_z_in_world - height_in_world_m - 0.5;
+      const double scaled_value = policy_value * 100.0; // back to cms
+      downsampled_msg->data[i] = static_cast<int8_t>(std::max(-100.0, std::min(100.0, scaled_value)));
+    } else {
+      downsampled_msg->data[i] = 0; // Default value for cells with no valid data
     }
   }
 

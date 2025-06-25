@@ -4,16 +4,23 @@
 #include <spot_driver/interfaces/logger_interface_base.hpp>
 #include <spot_driver/interfaces/parameter_interface_base.hpp>
 #include <spot_driver/api/middleware_handle_base.hpp>
+#include <spot_driver/interfaces/rclcpp_wall_timer_interface.hpp>
 
 #include <bosdyn/math/frame_helpers.h>
 #include <nav_msgs/msg/occupancy_grid.hpp>
+#include <bosdyn/math/proto_math.h>
 
 #include <memory>
 #include <string>
 #include <vector>
 #include <optional>
-#include <spot_driver/interfaces/rclcpp_wall_timer_interface.hpp>
+#include <algorithm>
+#include <cmath>
+
 #include <Eigen/Dense>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
+
+
 
 namespace spot_ros2 {
 
@@ -125,6 +132,17 @@ class LocalGridPublisher {
 
   std::string tf_root_, frame_prefix_, full_tf_root_id_;
   std::shared_ptr<nav_msgs::msg::OccupancyGrid> terrain_grid_data_;
+
+  const int policy_grid_width_ = 17; // -0.8 to 0.8 at 0.1 res
+  const int policy_grid_height_ = 11; // -0.5 to 0.5 at 0.1 res
+  const double policy_grid_resolution_ = 0.1;
+  const double num_policy_cells_ = 17 * 11; 
+
+  // Transform local grid origin to global frame using robot tf
+  const geometry_msgs::msg::Pose ds_grid_local_origin_ = geometry_msgs::build<geometry_msgs::msg::Pose>()
+    .position(geometry_msgs::msg::Point().set__x(1.0).set__y(2.0).set__z(0.0))
+    .orientation(geometry_msgs::msg::Quaternion().set__x(0.0).set__y(0.0).set__z(0.0).set__w(1.0));
+
 };
 
 }  // namespace spot_ros2
