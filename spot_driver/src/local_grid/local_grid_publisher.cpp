@@ -111,41 +111,36 @@ bool LocalGridPublisher::initialize() {
 }
 
 void LocalGridPublisher::localGridTimerCallback() {
-  
-  // Build the list of all grids we need to request from the robot.
+  // Step 1: Build the list of required grids for this cycle.
   auto grids_to_request = standard_grids_to_request_;
 
-  // The 'terrain' grid requires 'terrain_valid' for processing, so we must request it as well.
-  if (std::find(grids_to_request.begin(), grids_to_request.end(), "terrain") != grids_to_request.end()) {
-    if (std::find(grids_to_request.begin(), grids_to_request.end(), "terrain_valid") == grids_to_request.end()) {
-        grids_to_request.push_back("terrain_valid");
-    }
+  if (std::find(grids_to_request.begin(), grids_to_request.end(), "terrain") != grids_to_request.end() &&
+      std::find(grids_to_request.begin(), grids_to_request.end(), "terrain_valid") == grids_to_request.end()) {
+      grids_to_request.push_back("terrain_valid");
   }
-
   if (grids_to_request.empty()) {
-    return;
+      return;
   }
 
-  // Make a single API call to get all requested grids.
+  // Step 2: Make API calls to get grids and the latest robot state.
   const auto result = local_grid_client_interface_->getLocalGrids(grids_to_request);
+  const auto state_result = state_client_interface_->getRobotState();
+
   if (!result) {
-    logger_->logError("Failed to get local grids: " + result.error());
-    return;
+      logger_->logError("Failed to get local grids: " + result.error());
+      return;
+  }
+  if (!state_result) {
+      logger_->logError("Failed to get robot state for local grids: " + state_result.error());
+      return;
   }
 
   const auto& responses = result.value().local_grid_responses();
-  const auto& num_errors = result.value().num_local_grid_errors();
-
-  if(num_errors != 0){
-    logger_->logWarn("Failed to get some of the local grids!");
-  }
-  
-  const auto state_result = state_client_interface_->getRobotState();
-  if(!result){
-    logger_->logError("Failed to get robot state for local grids: " + result.error());
-    return;
+  if (result.value().num_local_grid_errors() != 0) {
+      logger_->logWarn("Failed to get some of the local grids!");
   }
 
+  // Step 3: Get the latest robot pose from the new state.
   if(state_result.value().has_kinematic_state()){
     tf_snapshot_ = state_result.value().kinematic_state().transforms_snapshot();
 
@@ -160,56 +155,57 @@ void LocalGridPublisher::localGridTimerCallback() {
       }
     }
   }
-  
-  // Process NON-TERRAIN GRID first
-  const ::bosdyn::api::LocalGridResponse *terrain_response, *terrain_valid_response;
-  int publish_terrain_grids = 0;
 
+  
+  // Step 4: Check if the 'terrain' grid was requested and process it first.
+    // This is a special case because it needs two source grids ('terrain' and 'terrain_valid').
+  bool terrain_was_requested = std::find(standard_grids_to_request_.begin(), standard_grids_to_request_.end(), "terrain") != standard_grids_to_request_.end();
+  if (terrain_was_requested) {
+
+      auto terrain_it = std::find_if(responses.cbegin(), responses.cend(), 
+          [](const auto& r) { return r.local_grid_type_name() == "terrain"; });
+
+      auto valid_it = std::find_if(responses.cbegin(), responses.cend(), 
+          [](const auto& r) { return r.local_grid_type_name() == "terrain_valid"; });
+
+      if (terrain_it != responses.cend() && valid_it != responses.cend()) {
+          ProcessedGridResult terrain_grids;
+          processTerrainGrid(*terrain_it, *valid_it, terrain_grids);
+          
+          // Store the main grid for the downsampler and publish it.
+          if (terrain_grids.main_grid) {
+              terrain_grid_data_ = terrain_grids.main_grid;    
+              middleware_handle_->publishSpecificOccupancyGrid("terrain", terrain_grids.main_grid);
+              terrain_grid_initialized_ = true;
+          }
+
+          // Publish the secondary grid (terrain_valid) if it was created.
+          if (terrain_grids.secondary_grid.has_value()) {
+              middleware_handle_->publishSpecificOccupancyGrid("terrain_valid", std::move(terrain_grids.secondary_grid.value()));
+          }
+      } else {
+          logger_->logWarn("Requested 'terrain' grid but did not receive both 'terrain' and 'terrain_valid' from robot.");
+      }
+    }
+
+  // Step 5: Loop through all responses and process any remaining (non-terrain) grids.
   for (const ::bosdyn::api::LocalGridResponse& response : responses) {
     const auto& name = response.local_grid_type_name();
-    // Skip 'terrain' and 'terrain_valid' since we've already handled them.
-    if (name == "terrain"){
-      terrain_response = &response;
-      publish_terrain_grids++;
-      continue;
-    }
-    if (name == "terrain_valid") {
-      terrain_valid_response = &response;
-      publish_terrain_grids++;
-      continue;
+    // Skip grids that were already handled in the special terrain-processing block.
+    if (name == "terrain" || (name == "terrain_valid" && terrain_was_requested)) {
+        continue;
     }
 
-    if(response.status() != ::bosdyn::api::LocalGridResponse_Status::LocalGridResponse_Status_STATUS_OK){
-      logger_->logError("No data received for local_grid with name: " + name);
-      continue;
+    if (response.status() != ::bosdyn::api::LocalGridResponse_Status::LocalGridResponse_Status_STATUS_OK) {
+        logger_->logError("No data received for local_grid with name: " + name);
+        continue;
     }
 
     auto occ_msg = processNonTerrainGrid(response);
     if (occ_msg) {
-      middleware_handle_->publishSpecificOccupancyGrid(name, std::move(occ_msg));
+        middleware_handle_->publishSpecificOccupancyGrid(name, std::move(occ_msg));
     }
   }
-
-  if(publish_terrain_grids >= 2){
-    ProcessedGridResult terrain_grids;
-    processTerrainGrid(*terrain_response, *terrain_valid_response, terrain_grids);
-
-    terrain_grid_data_ = terrain_grids.main_grid;    
-    middleware_handle_->publishSpecificOccupancyGrid(terrain_response->local_grid_type_name(), terrain_grids.main_grid);
-    
-    if(terrain_grids.secondary_grid.has_value()){
-      middleware_handle_->publishSpecificOccupancyGrid(terrain_valid_response->local_grid_type_name(), std::move(terrain_grids.secondary_grid.value()));
-    }
-  
-    terrain_grid_initialized_ = true;
-  }
-  else if(publish_terrain_grids == 1){
-    auto occ_msg = processNonTerrainGrid(*terrain_valid_response);
-    if (occ_msg) {
-      middleware_handle_->publishSpecificOccupancyGrid(terrain_valid_response->local_grid_type_name(), std::move(occ_msg));
-    }
-  }
-
 }
 
 void LocalGridPublisher::unpackKnownGridData(const bosdyn::api::LocalGrid& local_grid_proto, std::vector<float>& unpacked_known_data) const {
@@ -388,7 +384,7 @@ nav_msgs::msg::OccupancyGrid::UniquePtr LocalGridPublisher::processNonTerrainGri
     for(size_t i = 0; i < unpacked_known_data.size(); ++i){
       // The scales distance range of -2.0 to 2.0 -> -100 to 100
       // Negative disatnce means inside obstacle, which is set to 0
-      // This is a linear scaling: (val / 3.0) * 127.0
+      // This is a linear scaling: (val / 2.0) * 127.0
       // We also clamp the value to ensure it's within the valid range.
       // Unknown is set to -128.
       bool known = unpacked_unknown_data[i] == 0;
