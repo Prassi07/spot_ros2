@@ -17,6 +17,11 @@
 namespace {
 constexpr auto kLocalGridCallbackPeriod = std::chrono::duration<double>{1.0 / 30.0};  // 30 Hz
 constexpr auto kDownSampledGridCallbackPeriod = std::chrono::duration<double>{1.0 / 50.0}; // 50 Hz
+struct HeightModeTracker {
+    int modal_height = 0;
+    int max_count = 0;
+    std::map<int, int> histogram;
+};
 }
 
 namespace spot_ros2 {
@@ -92,7 +97,7 @@ bool LocalGridPublisher::initialize() {
   }
   // Create publishers for all the grid topics we need.
   if (publish_scandots_) {
-    standard_grids_to_publish_.push_back("DownsampledScanDots");
+    standard_grids_to_publish_.push_back("scandots");
   }
 
   middleware_handle_->createPublishers(standard_grids_to_publish_);
@@ -523,7 +528,6 @@ void LocalGridPublisher::downsampledGridTimerCallback() {
     return;
   }
 
-  std_msgs::msg::Header& header = terrain_grid_data_->header;
   nav_msgs::msg::MapMetaData& local_metadata = terrain_grid_data_->info;
   std::vector<int8_t>& local_terrain = terrain_grid_data_->data;
   ::bosdyn::api::SE3Pose& local_body_pose = tf_body_pose_;
@@ -533,78 +537,6 @@ void LocalGridPublisher::downsampledGridTimerCallback() {
 
   Eigen::Affine3d world_to_body_transform = Eigen::Translation3d(local_body_pose.position().x(), local_body_pose.position().y(), 0) *
                                            Eigen::Quaterniond(yaw_only_orientation.w(), yaw_only_orientation.x(), yaw_only_orientation.y(), yaw_only_orientation.z());
-
-  Eigen::Affine3d body_to_world_transform = world_to_body_transform.inverse();
-
-  // const int kernel_radius = 1;
-
-  // for (int iy = 0; iy < policy_grid_height; ++iy) {
-  //   for (int ix = 0; ix < policy_grid_width; ++ix) {
-
-  //     Eigen::Vector3d p_body(-0.8 + (ix + 0.5) * policy_grid_resolution, -0.5 + (iy + 0.5) * policy_grid_resolution, 0.0);
-
-  //     Eigen::Vector3d p_world = world_to_body_transform * p_body;
-
-  //     int center_hr_ix = static_cast<int>((p_world.x() - local_metadata.origin.position.x) / local_metadata.resolution);
-  //     int center_hr_iy = static_cast<int>((p_world.y() - local_metadata.origin.position.y) / local_metadata.resolution);
-      
-  //     std::vector<float> valid_heights_in_kernel;
-      
-  //     for (int dy = -kernel_radius; dy <= kernel_radius; ++dy) {
-  //       for (int dx = -kernel_radius; dx <= kernel_radius; ++dx) {
-  //         int current_hr_ix = center_hr_ix + dx;
-  //         int current_hr_iy = center_hr_iy + dy;
-          
-  //         if (current_hr_ix >= 0 && current_hr_ix < local_metadata.width && 
-  //             current_hr_iy >= 0 && current_hr_iy < local_metadata.height) {
-            
-  //           size_t hr_index = current_hr_iy * local_metadata.width + current_hr_ix;
-  //           valid_heights_in_kernel.push_back(local_terrain.at(hr_index) * 0.01f);
-  //         }
-  //       }
-  //     }
-
-  //     int8_t final_value = 0;
-  //     if (!valid_heights_in_kernel.empty()) {
-  //       const float avg_height = std::accumulate(valid_heights_in_kernel.begin(), valid_heights_in_kernel.end(), 0.0f) 
-  //                                   / valid_heights_in_kernel.size();
-        
-  //       const double height_in_world_m = avg_height + ground_plane_z;
-  //       const double policy_value = robot_z_in_world - height_in_world_m - 0.5;
-        
-  //       const double scaled_value = policy_value * 100.0;
-  //       final_value = static_cast<int8_t>(std::max(-100.0, std::min(100.0, scaled_value)));
-  //     }
-      
-  //     downsampled_msg->data[iy * policy_grid_width + ix] = final_value;
-  //   }
-  // }
-
-
-  // NEW: A vector of frequency maps, one for each policy grid cell.
-  std::vector<std::map<int, int>> histogram_accumulator(num_policy_cells_);
-
-  for(unsigned int hr_y = 0; hr_y < local_metadata.height; ++hr_y) {
-    for(unsigned int hr_x = 0; hr_x < local_metadata.width; ++hr_x) {
-      size_t hr_index = hr_y * local_metadata.width + hr_x;
-
-      Eigen::Vector3d p_hires((hr_x * local_metadata.resolution) + local_metadata.origin.position.x, (hr_y * local_metadata.resolution) + local_metadata.origin.position.y, 0.0);
-      
-      Eigen::Vector3d p_body = body_to_world_transform * p_hires;
-
-      if (p_body.x() >= -0.8 && p_body.x() < 0.9 && p_body.y() >= -0.5 && p_body.y() < 0.6) {
-        
-        int policy_ix = static_cast<int>((p_body.x() + 0.8) / policy_grid_resolution_);
-        int policy_iy = static_cast<int>((p_body.y() + 0.5) / policy_grid_resolution_);
-        
-        size_t policy_index = policy_iy * policy_grid_width_ + policy_ix;
-        
-        // Increment the count for this height in the corresponding policy cell's histogram.
-        histogram_accumulator[policy_index][local_terrain[hr_index]]++;
-      }
-    }
-  }
-
 
   auto downsampled_msg = std::make_shared<nav_msgs::msg::OccupancyGrid>();
   downsampled_msg->header.stamp = local_metadata.map_load_time;
@@ -631,29 +563,53 @@ void LocalGridPublisher::downsampledGridTimerCallback() {
 
   downsampled_msg->data.resize(num_policy_cells_);
   
+  const int kernel_radius = 1;
 
-  for(int i = 0; i < num_policy_cells_; ++i) {
-    if(!histogram_accumulator[i].empty()) {
-      // Find the most frequent height in the histogram for this cell. // Compare by count
-      auto most_frequent_element = std::max_element(
-          histogram_accumulator[i].begin(), 
-          histogram_accumulator[i].end(),
-          [](const auto& a, const auto& b) {
-              return a.second < b.second; 
-          });
+  for (int iy = 0; iy < policy_grid_height_; ++iy) {
+    for (int ix = 0; ix < policy_grid_width_; ++ix) {
+
+      Eigen::Vector3d p_body(-0.8 + (ix + 0.5) * policy_grid_resolution_, -0.5 + (iy + 0.5) * policy_grid_resolution_, 0.0);
+
+      Eigen::Vector3d p_world = world_to_body_transform * p_body;
+
+      int center_hr_ix = static_cast<int>((p_world.x() - local_metadata.origin.position.x) / local_metadata.resolution);
+      int center_hr_iy = static_cast<int>((p_world.y() - local_metadata.origin.position.y) / local_metadata.resolution);
       
-      int modal_height = most_frequent_element->first;
+      HeightModeTracker tracker;
+      
+      for (int dy = -kernel_radius; dy <= kernel_radius; ++dy) {
+        for (int dx = -kernel_radius; dx <= kernel_radius; ++dx) {
+          int current_hr_ix = center_hr_ix + dx;
+          int current_hr_iy = center_hr_iy + dy;
+          
+          if (current_hr_ix >= 0 && current_hr_ix < local_metadata.width && 
+              current_hr_iy >= 0 && current_hr_iy < local_metadata.height) {
+            
+            size_t hr_index = current_hr_iy * local_metadata.width + current_hr_ix;
+            int new_count = ++tracker.histogram[local_terrain.at(hr_index)];
+            if (new_count > tracker.max_count) {
+              tracker.max_count = new_count;
+              tracker.modal_height = local_terrain.at(hr_index);
+            }
 
-      const double height_in_world_m = static_cast<double>(modal_height) * 0.01;
-      const double policy_value = robot_z_in_world - height_in_world_m - 0.5;
-      const double scaled_value = policy_value * 100.0; // back to cms
-      downsampled_msg->data[i] = static_cast<int8_t>(std::max(-100.0, std::min(100.0, scaled_value)));
-    } else {
-      downsampled_msg->data[i] = 0; // Default value for cells with no valid data
+          }
+        }
+      }
+
+      int8_t final_value = 0;
+      if (tracker.max_count > 0) {
+        const double height_in_world_m = (tracker.modal_height * 0.01) + ground_plane_z;
+        const double policy_value = robot_z_in_world - height_in_world_m - 0.5;
+        
+        const double scaled_value = policy_value * 100.0;
+        final_value = static_cast<int8_t>(std::max(-100.0, std::min(100.0, scaled_value)));
+      }
+      
+      downsampled_msg->data[iy * policy_grid_width_ + ix] = final_value;
     }
   }
 
-  middleware_handle_->publishSpecificOccupancyGrid("DownsampledScanDots", std::move(downsampled_msg));
+  middleware_handle_->publishSpecificOccupancyGrid("scandots", std::move(downsampled_msg));
 }
 
 }  // namespace spot_ros2

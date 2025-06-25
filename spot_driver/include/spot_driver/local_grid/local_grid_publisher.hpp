@@ -140,7 +140,7 @@ class LocalGridPublisher {
 
   // Transform local grid origin to global frame using robot tf
   const geometry_msgs::msg::Pose ds_grid_local_origin_ = geometry_msgs::build<geometry_msgs::msg::Pose>()
-    .position(geometry_msgs::msg::Point().set__x(1.0).set__y(2.0).set__z(0.0))
+    .position(geometry_msgs::msg::Point().set__x(-0.8).set__y(-0.5).set__z(0.0))
     .orientation(geometry_msgs::msg::Quaternion().set__x(0.0).set__y(0.0).set__z(0.0).set__w(1.0));
 
 };
