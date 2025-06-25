@@ -23,11 +23,12 @@ LocalGridPublisherNode::LocalGridPublisherNode(std::unique_ptr<SpotApi> spot_api
                          std::unique_ptr<LocalGridPublisher::MiddlewareHandle> mw_handle,
                          std::unique_ptr<ParameterInterfaceBase> parameters,
                          std::unique_ptr<LoggerInterfaceBase> logger,
-                         std::unique_ptr<TimerInterfaceBase> timer,
+                         std::unique_ptr<TimerInterfaceBase> timer1,
+                         std::unique_ptr<TimerInterfaceBase> timer2,
                          std::unique_ptr<NodeInterfaceBase> node_base_interface)
     : node_base_interface_{std::move(node_base_interface)} {
   initialize(std::move(spot_api), std::move(mw_handle), std::move(parameters),
-             std::move(logger), std::move(timer));
+             std::move(logger), std::move(timer1), std::move(timer2));
 }
 LocalGridPublisherNode::LocalGridPublisherNode(const rclcpp::NodeOptions& node_options) {
 
@@ -37,14 +38,15 @@ const auto node = std::make_shared<rclcpp::Node>("state_publisher", node_options
   auto mw_handle = std::make_unique<LocalGridMiddlewareHandle>(node);
   auto parameter_interface = std::make_unique<RclcppParameterInterface>(node);
   auto logger_interface = std::make_unique<RclcppLoggerInterface>(node->get_logger());
-  auto timer_interface = std::make_unique<RclcppWallTimerInterface>(node);
-
+  auto timer1_interface = std::make_unique<RclcppWallTimerInterface>(node);
+  auto timer2_interface = std::make_unique<RclcppWallTimerInterface>(node);
+  
   const auto timesync_timeout = parameter_interface->getTimeSyncTimeout();
 
   auto spot_api = std::make_unique<DefaultSpotApi>(kDefaultSDKName, timesync_timeout, parameter_interface->getCertificate());
 
   initialize(std::move(spot_api), std::move(mw_handle), std::move(parameter_interface),
-             std::move(logger_interface), std::move(timer_interface));
+             std::move(logger_interface), std::move(timer1_interface), std::move(timer2_interface));
 
 }
 
@@ -52,7 +54,8 @@ void LocalGridPublisherNode::initialize(std::unique_ptr<SpotApi> spot_api,
                                         std::unique_ptr<LocalGridPublisher::MiddlewareHandle> mw_handle,
                                         std::unique_ptr<ParameterInterfaceBase> parameters,
                                         std::unique_ptr<LoggerInterfaceBase> logger,
-                                        std::unique_ptr<TimerInterfaceBase> timer) {
+                                        std::unique_ptr<TimerInterfaceBase> timer1,
+                                        std::unique_ptr<TimerInterfaceBase> timer2) {
   spot_api_ = std::move(spot_api);
 
   const auto hostname = parameters->getHostname();
@@ -76,7 +79,7 @@ void LocalGridPublisherNode::initialize(std::unique_ptr<SpotApi> spot_api,
 
   internal_ = std::make_unique<LocalGridPublisher>(spot_api_->localGridClientInterface(), spot_api_->stateClientInterface(),
                                                    std::move(mw_handle), std::move(parameters),
-                                                   std::move(logger), std::move(timer));
+                                                   std::move(logger), std::move(timer1), std::move(timer2));
                                                    
   if (!internal_->initialize()) {
     constexpr auto error_msg{"Failed to initialize Local Grid publisher."};

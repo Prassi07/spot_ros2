@@ -13,6 +13,7 @@
 #include <vector>
 #include <optional>
 #include <spot_driver/interfaces/rclcpp_wall_timer_interface.hpp>
+#include <Eigen/Dense>
 
 namespace spot_ros2 {
 
@@ -61,7 +62,8 @@ class LocalGridPublisher {
                      std::unique_ptr<MiddlewareHandle> middleware_handle,
                      std::unique_ptr<ParameterInterfaceBase> parameter_interface,
                      std::unique_ptr<LoggerInterfaceBase> logger_interface,
-                     std::unique_ptr<TimerInterfaceBase> timer_interface);
+                     std::unique_ptr<TimerInterfaceBase> timer1_interface,
+                     std::unique_ptr<TimerInterfaceBase> timer2_interface);
 
   [[nodiscard]] bool initialize();
 
@@ -108,7 +110,8 @@ class LocalGridPublisher {
   std::unique_ptr<MiddlewareHandle> middleware_handle_;
   std::shared_ptr<LocalGridClientInterface> local_grid_client_interface_;
   std::shared_ptr<StateClientInterface> state_client_interface_;
-  std::unique_ptr<TimerInterfaceBase> timer_interface_;
+  std::unique_ptr<TimerInterfaceBase> timer_interface_main_;
+  std::unique_ptr<TimerInterfaceBase> timer_interface_second_;
 
   // Parameters read from the ROS parameter server
   std::vector<std::string> standard_grids_to_publish_, standard_grids_to_request_;

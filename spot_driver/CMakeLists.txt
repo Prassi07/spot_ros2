@@ -33,6 +33,7 @@ set(THIS_PACKAGE_INCLUDE_ROS_DEPENDS
   spot_msgs
   std_srvs
   nav_msgs
+  tf2_geometry_msgs
 )
 
 find_package(ament_cmake REQUIRED)

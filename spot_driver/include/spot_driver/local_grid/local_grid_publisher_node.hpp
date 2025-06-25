@@ -30,7 +30,8 @@ class LocalGridPublisherNode{
                          std::unique_ptr<LocalGridPublisher::MiddlewareHandle> mw_handle,
                          std::unique_ptr<ParameterInterfaceBase> parameters,
                          std::unique_ptr<LoggerInterfaceBase> logger,
-                         std::unique_ptr<TimerInterfaceBase> timer,
+                         std::unique_ptr<TimerInterfaceBase> timer1,
+                         std::unique_ptr<TimerInterfaceBase> timer2,
                          std::unique_ptr<NodeInterfaceBase> node_base_interface);
 
   /**
@@ -72,7 +73,8 @@ class LocalGridPublisherNode{
                     std::unique_ptr<LocalGridPublisher::MiddlewareHandle> middleware_handle,
                     std::unique_ptr<ParameterInterfaceBase> parameter_interface,
                     std::unique_ptr<LoggerInterfaceBase> logger_interface,
-                    std::unique_ptr<TimerInterfaceBase> timer_interface);
+                    std::unique_ptr<TimerInterfaceBase> timer1_interface,
+                    std::unique_ptr<TimerInterfaceBase> timer2_interface);
 
   std::unique_ptr<NodeInterfaceBase> node_base_interface_;
   std::unique_ptr<SpotApi> spot_api_;

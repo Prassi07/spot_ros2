@@ -8,6 +8,8 @@
 #include <spot_driver/conversions/common_conversions.hpp>
 #include <spot_driver/conversions/geometry.hpp>
 #include <spot_driver/conversions/time.hpp>
+#include "bosdyn/math/proto_math.h"
+#include <tf2_geometry_msgs/tf2_geometry_msgs.h>
 
 #include <algorithm>
 #include <cmath>
@@ -26,13 +28,15 @@ LocalGridPublisher::LocalGridPublisher(
     std::unique_ptr<MiddlewareHandle> middleware_handle,
     std::unique_ptr<ParameterInterfaceBase> parameter_interface,
     std::unique_ptr<LoggerInterfaceBase> logger_interface,
-    std::unique_ptr<TimerInterfaceBase> timer_interface)
+    std::unique_ptr<TimerInterfaceBase> timer1_interface,
+    std::unique_ptr<TimerInterfaceBase> timer2_interface)
     : logger_{std::move(logger_interface)},
       param_interface_{std::move(parameter_interface)},
       middleware_handle_{std::move(middleware_handle)},
       local_grid_client_interface_{local_grid_client_interface},
       state_client_interface_{state_client_interface},
-      timer_interface_{std::move(timer_interface)} {}
+      timer_interface_main_{std::move(timer1_interface)},
+      timer_interface_second_{std::move(timer2_interface)} {}
 
 bool LocalGridPublisher::initialize() {
   
@@ -97,12 +101,12 @@ bool LocalGridPublisher::initialize() {
   terrain_grid_data_ = std::make_shared<nav_msgs::msg::OccupancyGrid>();
 
   // Create a timer to publish local grids
-  timer_interface_->setTimer(kLocalGridCallbackPeriod, [this]() {
+  timer_interface_main_->setTimer(kLocalGridCallbackPeriod, [this]() {
     localGridTimerCallback();
   });
 
   if (publish_scandots_) {
-    timer_interface_->setTimer(kDownSampledGridCallbackPeriod, [this]() {
+    timer_interface_second_->setTimer(kDownSampledGridCallbackPeriod, [this]() {
       downsampledGridTimerCallback();
     });
   }
@@ -515,20 +519,104 @@ void LocalGridPublisher::processTerrainGrid(const ::bosdyn::api::LocalGridRespon
 }
 
 void LocalGridPublisher::downsampledGridTimerCallback() {
-  
   if(!terrain_grid_initialized_){
     return;
   }
 
-  logger_->logDebug("Downsampled grid publishing is not yet implemented.");
-  // TODO:
-  // 1. Create a nav_msgs::msg::OccupancyGrid::UniquePtr.
-  auto downsampled_msg = std::make_unique<nav_msgs::msg::OccupancyGrid>();
-  //     Example: resolution is doubled, width/height are halved.
-  // 3. Implement your downsampling logic.
-  //    (e.g., iterate through the full_grid.data in 2x2 blocks and find max value)
-  // 4. Set downsampled_msg->data with the result.
-  // 5. Publish: middleware_handle_->publishSpecificOccupancyGrid("DownsampledScanDots", std::move(downsampled_msg));
+  std_msgs::msg::Header header = terrain_grid_data_->header;
+  nav_msgs::msg::MapMetaData local_metadata = terrain_grid_data_->info;
+  std::vector<int8_t> local_terrain = terrain_grid_data_->data;
+  ::bosdyn::api::SE3Pose local_body_pose = tf_body_pose_;
+  
+  double ground_plane_z = local_metadata.origin.position.z;
+  ::bosdyn::api::Quaternion yaw_only_orientation = ::bosdyn::api::ClosestYawOnly(local_body_pose.rotation());
+
+  Eigen::Affine3d world_to_body_transform = Eigen::Translation3d(local_body_pose.position().x(), local_body_pose.position().y(), 0) *
+                                           Eigen::Quaterniond(yaw_only_orientation.w(), yaw_only_orientation.x(), yaw_only_orientation.y(), yaw_only_orientation.z());
+
+  Eigen::Affine3d body_to_world_transform = world_to_body_transform.inverse();
+  
+
+  // Define the target grid for the policy
+  const int policy_grid_width = 17; // -0.8 to 0.8 at 0.1 res
+  const int policy_grid_height = 11; // -0.5 to 0.5 at 0.1 res
+  const double policy_grid_resolution = 0.1;
+
+  auto downsampled_msg = std::make_shared<nav_msgs::msg::OccupancyGrid>();
+  downsampled_msg->header.stamp = local_metadata.map_load_time;
+  downsampled_msg->header.frame_id = full_tf_root_id_;
+  downsampled_msg->info.resolution = policy_grid_resolution;
+  downsampled_msg->info.width = policy_grid_width;
+  downsampled_msg->info.height = policy_grid_height;
+
+  // Transform local grid origin to global frame using robot tf
+  geometry_msgs::msg::Pose ds_grid_local_origin, ds_grid_global_origin;
+  ds_grid_local_origin.position.x = -0.8;
+  ds_grid_local_origin.position.y = -0.5;
+  ds_grid_local_origin.position.z = 0.0;
+  ds_grid_local_origin.orientation.w = 1.0;
+
+  ::bosdyn::api::SE3Pose pose_yaw_only;
+  pose_yaw_only.mutable_position()->set_x(local_body_pose.position().x());
+  pose_yaw_only.mutable_position()->set_y(local_body_pose.position().y());
+  pose_yaw_only.mutable_position()->set_z(local_body_pose.position().z());
+  pose_yaw_only.mutable_rotation()->CopyFrom(yaw_only_orientation);
+
+  geometry_msgs::msg::Transform transform;
+  convertToRos(pose_yaw_only, transform);
+  geometry_msgs::msg::TransformStamped tf_stm;
+  tf_stm.transform = transform;
+  tf2::doTransform(ds_grid_local_origin, ds_grid_global_origin, tf_stm);
+
+  downsampled_msg->info.origin = ds_grid_global_origin;
+  downsampled_msg->data.resize(policy_grid_width * policy_grid_height);
+
+  const double robot_z_in_world = local_body_pose.position().z();
+  const int kernel_radius = 1;
+
+  for (int iy = 0; iy < policy_grid_height; ++iy) {
+    for (int ix = 0; ix < policy_grid_width; ++ix) {
+
+      Eigen::Vector3d p_body(-0.8 + (ix + 0.5) * policy_grid_resolution, -0.5 + (iy + 0.5) * policy_grid_resolution, 0.0);
+
+      Eigen::Vector3d p_world = world_to_body_transform * p_body;
+
+      int center_hr_ix = static_cast<int>((p_world.x() - local_metadata.origin.position.x) / local_metadata.resolution);
+      int center_hr_iy = static_cast<int>((p_world.y() - local_metadata.origin.position.y) / local_metadata.resolution);
+      
+      std::vector<float> valid_heights_in_kernel;
+      
+      for (int dy = -kernel_radius; dy <= kernel_radius; ++dy) {
+        for (int dx = -kernel_radius; dx <= kernel_radius; ++dx) {
+          int current_hr_ix = center_hr_ix + dx;
+          int current_hr_iy = center_hr_iy + dy;
+          
+          if (current_hr_ix >= 0 && current_hr_ix < local_metadata.width && 
+              current_hr_iy >= 0 && current_hr_iy < local_metadata.height) {
+            
+            size_t hr_index = current_hr_iy * local_metadata.width + current_hr_ix;
+            valid_heights_in_kernel.push_back(local_terrain.at(hr_index) * 0.01f);
+          }
+        }
+      }
+
+      int8_t final_value = 0;
+      if (!valid_heights_in_kernel.empty()) {
+        const float avg_height = std::accumulate(valid_heights_in_kernel.begin(), valid_heights_in_kernel.end(), 0.0f) 
+                                    / valid_heights_in_kernel.size();
+        
+        const double height_in_world_m = avg_height + ground_plane_z;
+        const double policy_value = robot_z_in_world - height_in_world_m - 0.5;
+        
+        const double scaled_value = policy_value * 100.0;
+        final_value = static_cast<int8_t>(std::max(-100.0, std::min(100.0, scaled_value)));
+      }
+      
+      downsampled_msg->data[iy * policy_grid_width + ix] = final_value;
+    }
+  }
+
+  middleware_handle_->publishSpecificOccupancyGrid("DownsampledScanDots", std::move(downsampled_msg));
 }
 
 }  // namespace spot_ros2
