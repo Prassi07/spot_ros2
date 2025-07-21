@@ -956,6 +956,7 @@ class SpotROS(Node):
             Trajectory,
             "trajectory",
             self.handle_trajectory,
+            cancel_callback=self.handle_cancel_trajectory
         )
         # spot_ros.trajectory_server.start()
 
@@ -2408,6 +2409,14 @@ class SpotROS(Node):
             self.get_logger().info("Returning action result " + str(result))
         return result
 
+    def handle_cancel_trajectory(self, goal_handle: ServerGoalHandle) -> Optional[Trajectory.Result]:
+        # self.get_logger().info("Received trajectory cancel request.")
+        # Command the robot to stop its current motion.
+        if self.spot_wrapper:
+            self.spot_wrapper.stop()
+        return rclpy.action.CancelResponse.ACCEPT
+        
+    
     def handle_trajectory(self, goal_handle: ServerGoalHandle) -> Optional[Trajectory.Result]:
         """ROS actionserver execution handler to handle receiving a request to move to a location"""
         result: Optional[Trajectory.Result] = None
@@ -2466,6 +2475,16 @@ class SpotROS(Node):
 
         try:
             while rclpy.ok() and not self.spot_wrapper.trajectory_complete and goal_handle.is_active:
+                
+                if goal_handle.is_cancel_requested:
+                    result = Trajectory.Result()
+                    # The cancel_callback has already issued a stop command. Now we just mark the goal as canceled.
+                    goal_handle.canceled()
+                    result.success = False
+                    result.message = "Trajectory canceled by client."
+                    # self.get_logger().info(result.message)
+                    return result
+            
                 feedback = Trajectory.Feedback()
                 if self.spot_wrapper.stopped:
                     feedback.feedback = "Stopped, possibly blocked."
