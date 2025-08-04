@@ -133,14 +133,21 @@ class LocalGridPublisher {
   std::string tf_root_, frame_prefix_, full_tf_root_id_;
   std::shared_ptr<nav_msgs::msg::OccupancyGrid> terrain_grid_data_;
 
-  const int policy_grid_width_ = 17; // -0.8 to 0.8 at 0.1 res
-  const int policy_grid_height_ = 11; // -0.5 to 0.5 at 0.1 res
+  // Old grid -> [1.6, 1.0]
+  // const int policy_grid_width_ = 17; // -0.8 to 0.8 at 0.1 res
+  // const int policy_grid_height_ = 11; // -0.5 to 0.5 at 0.1 res
+  // const double policy_grid_resolution_ = 0.1;
+  // const double num_policy_cells_ = 17 * 11; 
+  
+  // New grid -> [2.4, 1.6]
+  const int policy_grid_width_ = 25; // -1.2 to 1.2 at 0.1 res
+  const int policy_grid_height_ = 17; // -0.8 to 0.8 at 0.1 res
   const double policy_grid_resolution_ = 0.1;
-  const double num_policy_cells_ = 17 * 11; 
+  const double num_policy_cells_ = 25 * 17; 
 
   // Transform local grid origin to global frame using robot tf
   const geometry_msgs::msg::Pose ds_grid_local_origin_ = geometry_msgs::build<geometry_msgs::msg::Pose>()
-    .position(geometry_msgs::msg::Point().set__x(-0.8).set__y(-0.5).set__z(0.0))
+    .position(geometry_msgs::msg::Point().set__x(-1.2).set__y(-0.8).set__z(0.0))
     .orientation(geometry_msgs::msg::Quaternion().set__x(0.0).set__y(0.0).set__z(0.0).set__w(1.0));
 
 };

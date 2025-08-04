@@ -9,7 +9,7 @@
 #include <spot_driver/conversions/geometry.hpp>
 #include <spot_driver/conversions/time.hpp>
 #include "bosdyn/math/proto_math.h"
-#include <tf2_geometry_msgs/tf2_geometry_msgs.h>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -567,8 +567,8 @@ void LocalGridPublisher::downsampledGridTimerCallback() {
 
   for (int iy = 0; iy < policy_grid_height_; ++iy) {
     for (int ix = 0; ix < policy_grid_width_; ++ix) {
-
-      Eigen::Vector3d p_body(-0.8 + (ix + 0.5) * policy_grid_resolution_, -0.5 + (iy + 0.5) * policy_grid_resolution_, 0.0);
+      
+      Eigen::Vector3d p_body(ds_grid_local_origin_.position.x + (ix + 0.5) * policy_grid_resolution_, ds_grid_local_origin_.position.y + (iy + 0.5) * policy_grid_resolution_, 0.0);
 
       Eigen::Vector3d p_world = world_to_body_transform * p_body;
 
